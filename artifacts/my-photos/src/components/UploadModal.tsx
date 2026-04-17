@@ -19,7 +19,7 @@ function parseExifDate(raw: unknown): string | null {
   return null;
 }
 
-interface UploadModalProps { onClose: () => void; albumId?: string; albumName?: string; }
+interface UploadModalProps { onClose: () => void; albumId?: string; albumName?: string; initialFiles?: File[]; }
 interface UploadFile {
   file: File; status: "pending" | "uploading" | "done" | "error";
   previewUrl: string; error?: string;
@@ -45,7 +45,7 @@ function VideoThumb({ file }: { file: File }) {
   return <img src={thumb} alt="" className="w-full h-full object-cover" />;
 }
 
-export default function UploadModal({ onClose, albumId, albumName }: UploadModalProps) {
+export default function UploadModal({ onClose, albumId, albumName, initialFiles }: UploadModalProps) {
   const queryClient = useQueryClient();
   const [files, setFiles]     = useState<UploadFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -60,6 +60,12 @@ export default function UploadModal({ onClose, albumId, albumName }: UploadModal
       previewUrl: f.type.startsWith("image/") ? URL.createObjectURL(f) : "",
     }))]);
   };
+
+  // Pre-populate files shared from the device gallery via the Share Target API
+  useEffect(() => {
+    if (initialFiles && initialFiles.length > 0) addFiles(initialFiles);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setIsDragging(false); addFiles(Array.from(e.dataTransfer.files));

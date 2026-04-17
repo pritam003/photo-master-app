@@ -3,11 +3,24 @@
     {
       "route": "/api/*",
       "allowedRoles": ["anonymous"]
+    },
+    {
+      "route": "/sw.js",
+      "headers": {
+        "Cache-Control": "no-store",
+        "Service-Worker-Allowed": "/"
+      }
+    },
+    {
+      "route": "/*.webmanifest",
+      "headers": {
+        "Cache-Control": "no-store"
+      }
     }
   ],
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/api/*", "/_framework/*", "/favicon.ico"]
+    "exclude": ["/api/*", "/_framework/*", "/favicon.ico", "/share-target"]
   },
   "globalHeaders": {
     "Cache-Control": "no-store",

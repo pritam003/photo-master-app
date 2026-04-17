@@ -1,8 +1,12 @@
 import { Switch, Route, Router as WouterRouter, useLocation, Redirect } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
+import { useRegisterSW } from "virtual:pwa-register/react";
+import { toast } from "sonner";
+import { Toaster } from "@/components/ui/sonner";
 import Sidebar from "@/components/Sidebar";
 import UploadModal from "@/components/UploadModal";
+import { getSharedFiles, clearSharedFiles } from "@/lib/shared-files-db";
 import LibraryPage from "@/pages/library";
 import FavoritesPage from "@/pages/favorites";
 import AlbumsPage from "@/pages/albums";
@@ -52,7 +56,32 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
 function AppLayout() {
   const [showUpload, setShowUpload] = useState(false);
+  const [initialUploadFiles, setInitialUploadFiles] = useState<File[]>([]);
   const [collapsed, setCollapsed] = useState(false);
+
+  // Handle photos shared from the device gallery via the Web Share Target API.
+  // The service worker intercepts POST /share-target, saves files to IndexedDB,
+  // then redirects here with ?shared=1.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("shared")) return;
+    // Remove query param immediately so a refresh doesn't re-trigger
+    const url = new URL(window.location.href);
+    url.searchParams.delete("shared");
+    window.history.replaceState(null, "", url.toString());
+
+    getSharedFiles()
+      .then((entries) => {
+        if (entries.length === 0) return;
+        const files = entries.map(
+          (e) => new File([e.data], e.name, { type: e.type, lastModified: e.lastModified })
+        );
+        clearSharedFiles().catch(() => {});
+        setInitialUploadFiles(files);
+        setShowUpload(true);
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [darkMode, setDarkMode] = useState(() => {
     return document.documentElement.classList.contains("dark") ||
       window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -84,7 +113,15 @@ function AppLayout() {
           <Route component={NotFound} />
         </Switch>
       </main>
-      {showUpload && <UploadModal onClose={() => setShowUpload(false)} />}
+      {showUpload && (
+        <UploadModal
+          onClose={() => {
+            setShowUpload(false);
+            setInitialUploadFiles([]);
+          }}
+          initialFiles={initialUploadFiles}
+        />
+      )}
       <ImportProgressBanner />
     </div>
   );
@@ -106,11 +143,31 @@ function Router() {
 }
 
 function App() {
+  // Show a toast when a new service worker version is waiting to activate
+  const {
+    needRefresh: [needRefresh],
+    updateServiceWorker,
+  } = useRegisterSW();
+
+  useEffect(() => {
+    if (needRefresh) {
+      toast("Update available", {
+        description: "A new version of APhoto is ready.",
+        action: {
+          label: "Reload",
+          onClick: () => updateServiceWorker(true),
+        },
+        duration: Infinity,
+      });
+    }
+  }, [needRefresh, updateServiceWorker]);
+
   return (
     <QueryClientProvider client={queryClient}>
       <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
         <ImportProvider>
           <Router />
+          <Toaster />
         </ImportProvider>
       </WouterRouter>
     </QueryClientProvider>

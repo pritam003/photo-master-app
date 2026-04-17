@@ -1,0 +1,16 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Red rounded background -->
+  <rect width="512" height="512" rx="102" fill="#FF3C00"/>
+  <!-- Camera body (white) -->
+  <rect x="72" y="186" width="368" height="228" rx="28" fill="white"/>
+  <!-- Top viewfinder bump (white, overlaps body to form single shape) -->
+  <rect x="184" y="150" width="144" height="52" rx="16" fill="white"/>
+  <!-- Lens outer ring (red for contrast against white body) -->
+  <circle cx="256" cy="300" r="80" fill="#FF3C00"/>
+  <!-- Lens inner ring (white) -->
+  <circle cx="256" cy="300" r="54" fill="white"/>
+  <!-- Lens center aperture (red) -->
+  <circle cx="256" cy="300" r="30" fill="#FF3C00"/>
+  <!-- Flash indicator dot (top-left of body) -->
+  <circle cx="140" cy="228" r="20" fill="#FF3C00"/>
+</svg>
