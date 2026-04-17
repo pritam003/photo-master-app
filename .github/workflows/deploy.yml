@@ -141,6 +141,7 @@ jobs:
               --name "$WORKER" \
               --resource-group "$RG" \
               --image "$IMAGE"
+          fi
 
   # ── Build & deploy frontend to Static Web Apps ───────────────────────────────
   deploy-frontend:
