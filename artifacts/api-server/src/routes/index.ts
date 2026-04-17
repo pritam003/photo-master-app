@@ -9,6 +9,7 @@ import blobsRouter from "./blobs.js";
 import googleImportRouter from "./google-import.js";
 import archiveLockRouter from "./archive-lock.js";
 import peopleRouter from "./people.js";
+import adminRouter from "./admin.js";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,6 @@ router.use(blobsRouter);
 router.use(googleImportRouter);
 router.use(archiveLockRouter);
 router.use(peopleRouter);
+router.use(adminRouter);
 
 export default router;

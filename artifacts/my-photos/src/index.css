@@ -183,3 +183,38 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* ── Mobile browser optimizations ── */
+@layer base {
+  /* Use dynamic viewport height so content doesn't hide under mobile browser chrome */
+  html {
+    height: -webkit-fill-available;
+  }
+  body {
+    min-height: 100dvh;
+    /* Prevent rubber-band scroll on iOS */
+    overscroll-behavior: none;
+    /* Smooth scrolling on iOS */
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Prevent text size adjustment on orientation change */
+  * {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  /* Remove tap highlight on mobile */
+  button, a, [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+}
+
+/* ── Safe area padding utilities ── */
+@layer utilities {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+}

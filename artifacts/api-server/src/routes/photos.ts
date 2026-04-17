@@ -5,7 +5,7 @@ import path from "path";
 import { db, photosTable, albumPhotosTable, albumsTable, shareLinksTable } from "@workspace/db";
 import { eq, and, desc, ilike, or, sql, inArray } from "drizzle-orm";
 import { uploadBlob, deleteBlob, generateSasUrl, generateUploadSasUrl, downloadBlob } from "../lib/azure-storage.js";
-import { generateThumbnails } from "../lib/thumbnails.js";
+import { generateThumbnails, generateVideoThumbnails } from "../lib/thumbnails.js";
 import { cacheGet, cacheSet, cacheDel, cacheDelPattern } from "../lib/cache.js";
 import exifr from "exifr";
 
@@ -496,7 +496,9 @@ router.post("/photos/register", async (req: any, res) => {
           await db.update(photosTable).set({ takenAt: extracted }).where(eq(photosTable.id, photo.id));
         }
       }
-      const thumbs = await generateThumbnails(buf, blobName, contentType);
+      const thumbs = contentType.startsWith("video/")
+        ? await generateVideoThumbnails(buf, blobName)
+        : await generateThumbnails(buf, blobName, contentType);
       if (thumbs) {
         await db.update(photosTable)
           .set({ thumbBlobName: thumbs.thumbBlobName, previewBlobName: thumbs.previewBlobName })
@@ -520,9 +522,12 @@ router.post("/photos", upload.single("file"), async (req: any, res) => {
     : `${userId}/${randomUUID()}${ext}`;
 
   // Vision tags, GPS/location, and face recognition are handled by the worker Container App.
+  const isVideo = req.file.mimetype.startsWith("video/");
   const [takenAt, thumbs] = await Promise.all([
     extractTakenAt(req.file.buffer, req.file.mimetype),
-    generateThumbnails(req.file.buffer, blobName, req.file.mimetype),
+    isVideo
+      ? generateVideoThumbnails(req.file.buffer, blobName)
+      : generateThumbnails(req.file.buffer, blobName, req.file.mimetype),
   ]);
 
   await uploadBlob(blobName, req.file.buffer, req.file.mimetype);

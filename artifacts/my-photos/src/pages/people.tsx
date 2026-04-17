@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Users, RefreshCw } from "lucide-react";
+import { Users } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { API_BASE } from "@/lib/api";
 import PersonCard from "@/components/PersonCard";
@@ -61,15 +61,6 @@ export default function PeoplePage() {
           </span>
         )}
         <div className="flex-1" />
-        <button
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50"
-          title="Refresh people"
-        >
-          <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
       </div>
 
       {/* Face scan progress bar */}

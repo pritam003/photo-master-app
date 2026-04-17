@@ -45,9 +45,10 @@ WORKDIR /app
 FROM node:22-slim
 WORKDIR /app
 
-# Runtime shared libraries required by canvas, tfjs-node, and sharp
+# Runtime shared libraries required by canvas, tfjs-node, sharp, and ffmpeg (video thumbnails)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 libpango-1.0-0 libgif7 librsvg2-2 libpixman-1-0 libvips \
+    ffmpeg \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/deploy ./

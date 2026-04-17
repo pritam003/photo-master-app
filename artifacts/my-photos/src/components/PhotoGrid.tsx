@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
-import { Heart, FolderPlus, Check, FolderMinus, Trash2, Download, X, EyeOff, Eye } from "lucide-react";
+import { Heart, FolderPlus, Check, FolderMinus, Trash2, Download, X, EyeOff, Eye, Share2 } from "lucide-react";
 import { groupPhotosByDate } from "@/lib/api";
 import Lightbox from "./Lightbox";
 import { useListAlbums, useAddPhotoToAlbum, useCreateAlbum, useTrashPhoto, getListAlbumsQueryKey, getListAlbumPhotosQueryKey, getListPhotosQueryKey, getGetPhotoStatsQueryKey } from "@workspace/api-client-react";
@@ -129,21 +129,35 @@ export default function PhotoGrid({ photos, emptyMessage = "No photos yet", date
   const handleBulkDownload = useCallback(async () => {
     const selectedPhotos = photos.filter(p => selectedIds.has(p.id));
     for (const photo of selectedPhotos) {
-      try {
-        const response = await fetch(photo.url || photo.thumbnailUrl, { credentials: "include" });
-        const blob = await response.blob();
-        const objectUrl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = objectUrl;
-        a.download = photo.filename || "photo.jpg";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(objectUrl);
-        await new Promise(r => setTimeout(r, 200));
-      } catch { /* skip failed */ }
+      const a = document.createElement("a");
+      a.href = photo.url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.download = photo.filename || "photo.jpg";
+      a.click();
+      await new Promise(r => setTimeout(r, 150));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photos, selectedIds]);
+
+  const handleBulkShare = useCallback(async () => {
+    const selectedPhotos = photos.filter(p => selectedIds.has(p.id));
+    if (navigator.share && selectedPhotos.length > 0) {
+      try {
+        const files: File[] = [];
+        for (const photo of selectedPhotos) {
+          try {
+            const res = await fetch(photo.url);
+            const blob = await res.blob();
+            files.push(new File([blob], photo.filename || "photo.jpg", { type: blob.type }));
+          } catch { /* skip failed */ }
+        }
+        if (files.length > 0 && navigator.canShare?.({ files })) {
+          await navigator.share({ files, title: `${files.length} photo${files.length !== 1 ? "s" : ""}` });
+        } else {
+          await navigator.share({ url: selectedPhotos[0].url, title: "Photo" });
+        }
+      } catch { /* user cancelled */ }
+    }
   }, [photos, selectedIds]);
 
   const handleBulkTrash = useCallback(async () => {
@@ -271,29 +285,50 @@ export default function PhotoGrid({ photos, emptyMessage = "No photos yet", date
 
       {/* Multi-select floating action bar */}
       {selecting && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 bg-card border border-border rounded-2xl shadow-2xl">
-          <span className="text-sm font-medium text-foreground">{selectedIds.size} selected</span>
-          <div className="w-px h-4 bg-border mx-1" />
+        <div className="fixed bottom-[calc(56px+env(safe-area-inset-bottom)+8px)] sm:bottom-6 left-1/2 -translate-x-1/2 z-50
+          flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5
+          bg-card border border-border rounded-2xl shadow-2xl
+          max-w-[calc(100vw-2rem)]">
+
+          {/* Count + select-all */}
+          <span className="text-sm font-medium text-foreground whitespace-nowrap">{selectedIds.size}</span>
           <button
             onClick={() => setSelectedIds(new Set(photos.map(p => p.id)))}
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded hover:bg-muted"
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded hover:bg-muted whitespace-nowrap"
           >
-            Select all
+            All
           </button>
+
+          <div className="w-px h-4 bg-border mx-0.5" />
+
+          {/* Share — mobile Web Share API */}
+          <button
+            onClick={handleBulkShare}
+            title="Share"
+            className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Share2 className="w-4 h-4" />
+          </button>
+
+          {/* Download */}
           <button
             onClick={handleBulkDownload}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-muted transition-colors"
+            title="Download"
+            className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-1.5 text-sm rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
           >
-            <Download className="w-3.5 h-3.5" />
-            Download
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">Download</span>
           </button>
+
+          {/* Add to album */}
           <div className="relative">
             <button
               onClick={() => setShowBulkAlbumPicker(v => !v)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-muted transition-colors"
+              title="Add to album"
+              className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-1.5 text-sm rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             >
-              <FolderPlus className="w-3.5 h-3.5" />
-              Add to album
+              <FolderPlus className="w-4 h-4" />
+              <span className="hidden sm:inline">Add to album</span>
             </button>
             {showBulkAlbumPicker && (
               <div className="absolute bottom-full mb-2 left-0 z-20 bg-card border border-border rounded-xl shadow-2xl min-w-52 max-h-72 overflow-y-auto">
@@ -340,24 +375,32 @@ export default function PhotoGrid({ photos, emptyMessage = "No photos yet", date
               </div>
             )}
           </div>
+
+          {/* Hide */}
           <button
             onClick={handleBulkHide}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-muted transition-colors"
+            title="Hide"
+            className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-1.5 text-sm rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
           >
-            <EyeOff className="w-3.5 h-3.5" />
-            Hide
+            <EyeOff className="w-4 h-4" />
+            <span className="hidden sm:inline">Hide</span>
           </button>
+
+          {/* Delete */}
           <button
             onClick={handleBulkTrash}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors"
+            title="Delete"
+            className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-1.5 text-sm rounded-lg text-destructive hover:bg-destructive/10 transition-colors"
           >
-            <Trash2 className="w-3.5 h-3.5" />
-            Delete
+            <Trash2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Delete</span>
           </button>
+
+          {/* Dismiss */}
           <button
             onClick={() => setSelectedIds(new Set())}
-            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors ml-1"
             title="Clear selection"
+            className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -470,14 +513,14 @@ const MonthGroup = memo(function MonthGroup({ month, monthPhotos, photoIndexMap,
   );
 });
 
-function VideoThumbnailCell({ src, isHovered }: { src: string; alt: string; isHovered: boolean }) {
+function VideoThumbnailCell({ videoSrc, isHovered }: { thumbSrc: string; videoSrc: string; alt: string; isHovered: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [inView, setInView] = useState(false);
   const [frameReady, setFrameReady] = useState(false);
-  const firstFrameTime = useRef(0);
+  const thumbTime = useRef(0);
 
-  // Lazy-mount: only render the <video> element when near the viewport
+  // Lazy-mount the video element only when near the viewport
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -488,50 +531,33 @@ function VideoThumbnailCell({ src, isHovered }: { src: string; alt: string; isHo
     return () => obs.disconnect();
   }, []);
 
-  // Native DOM listeners — avoid React synthetic event race condition
+  // After metadata loads seek to a representative frame so the poster is visible
   useEffect(() => {
     if (!inView) return;
     const v = videoRef.current;
     if (!v) return;
-
-    const markReady = () => setFrameReady(true);
-    const seekToFrame = () => {
+    const onMeta = () => {
       const t = v.duration > 0 ? Math.min(1, v.duration * 0.05) : 0;
-      firstFrameTime.current = t;
+      thumbTime.current = t;
       v.currentTime = t;
     };
-    const onMetadata = () => {
-      seekToFrame();
-      // Mark ready immediately on metadata — the video element will show
-      // whatever frame it has. seeked will fire later with a better frame.
-      markReady();
-    };
-
-    v.addEventListener("canplay", markReady);
-    v.addEventListener("seeked", markReady);
-    v.addEventListener("loadedmetadata", onMetadata);
-
-    // Handle already-loaded state
-    if (v.readyState >= 3) { markReady(); }
-    else if (v.readyState >= 1) { onMetadata(); }
-
-    // Hard fallback: always clear placeholder after 2s regardless of events
-    const fallback = setTimeout(markReady, 2000);
-
+    const onSeeked = () => setFrameReady(true);
+    const onCanPlay = () => setFrameReady(true);
+    v.addEventListener("loadedmetadata", onMeta);
+    v.addEventListener("seeked", onSeeked);
+    v.addEventListener("canplay", onCanPlay);
+    // Fallback: show whatever is there after 2 s
+    const fallback = setTimeout(() => setFrameReady(true), 2000);
+    if (v.readyState >= 2) { onMeta(); }
     return () => {
-      v.removeEventListener("canplay", markReady);
-      v.removeEventListener("seeked", markReady);
-      v.removeEventListener("loadedmetadata", onMetadata);
+      v.removeEventListener("loadedmetadata", onMeta);
+      v.removeEventListener("seeked", onSeeked);
+      v.removeEventListener("canplay", onCanPlay);
       clearTimeout(fallback);
     };
   }, [inView]);
 
-  // Play on hover, reset to first frame on leave.
-  // Do NOT guard on frameReady — play() works fine on unloaded video
-  // (browser loads + buffers + starts playing once enough data arrives).
-  // Including frameReady in deps means we re-run when the still frame is
-  // ready, so if the user is still hovering we start playback even if load
-  // was slow.
+  // Play on hover (desktop), pause and return to thumb frame on leave
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -539,25 +565,24 @@ function VideoThumbnailCell({ src, isHovered }: { src: string; alt: string; isHo
       v.play().catch(() => {});
     } else {
       v.pause();
-      // Only seek back if video has loaded data (avoids invalid state errors)
-      if (v.readyState >= 1) v.currentTime = firstFrameTime.current;
+      if (v.readyState >= 1) v.currentTime = thumbTime.current;
     }
-  }, [isHovered, frameReady]);
+  }, [isHovered]);
 
   return (
     <div ref={containerRef} className="w-full h-full relative pointer-events-none">
       {inView && (
         <video
           ref={videoRef}
-          src={src}
+          src={videoSrc}
           className="w-full h-full object-cover"
           muted
           loop
           playsInline
-          preload={isHovered ? "auto" : "metadata"}
+          preload="metadata"
         />
       )}
-      {/* Pulse placeholder until first frame is ready */}
+      {/* Pulse placeholder until first frame is painted */}
       {(!frameReady || !inView) && (
         <div className="absolute inset-0 bg-muted animate-pulse" />
       )}
@@ -593,6 +618,28 @@ const PhotoThumbnail = memo(function PhotoThumbnail({ photo, globalIndex, onOpen
   const { data: albums } = useListAlbums({ query: { queryKey: getListAlbumsQueryKey(), enabled: showAlbumPicker } });
   const addPhoto = useAddPhotoToAlbum();
 
+  // Long-press to select on mobile
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressTriggered = useRef(false);
+  const touchMoved = useRef(false);
+
+  const handleTouchStart = () => {
+    touchMoved.current = false;
+    longPressTriggered.current = false;
+    longPressTimer.current = setTimeout(() => {
+      longPressTriggered.current = true;
+      onToggleSelect(photo.id);
+      if (navigator.vibrate) navigator.vibrate(40);
+    }, 500);
+  };
+  const handleTouchMove = () => {
+    touchMoved.current = true;
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+  };
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+  };
+
   const handleAddToAlbum = async (e: React.MouseEvent, albumId: string) => {
     e.stopPropagation();
     await addPhoto.mutateAsync({ id: albumId, data: { photoId: photo.id } });
@@ -604,18 +651,25 @@ const PhotoThumbnail = memo(function PhotoThumbnail({ photo, globalIndex, onOpen
 
   return (
     <button
-      onClick={() => selecting ? onToggleSelect(photo.id) : onOpenLightbox(globalIndex)}
+      onClick={(e) => {
+        if (longPressTriggered.current) { longPressTriggered.current = false; return; }
+        selecting ? onToggleSelect(photo.id) : onOpenLightbox(globalIndex);
+      }}
       data-testid={`photo-${photo.id}`}
       data-photo-id={photo.id}
       className="photo-thumb relative aspect-square bg-muted overflow-hidden rounded-lg group focus:outline-none focus:ring-2 focus:ring-primary transition-[transform,box-shadow] duration-200 hover:scale-[1.03] hover:shadow-lg hover:z-10"
       style={{ contain: "layout style paint" }}
       onMouseEnter={() => isVideo && setVideoHovered(true)}
       onMouseLeave={() => isVideo && setVideoHovered(false)}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
       {!error ? (
         isVideo ? (
           <VideoThumbnailCell
-            src={thumbUrl}
+            thumbSrc={photo.thumbnailUrl || photo.url}
+            videoSrc={photo.url}
             alt={photo.filename}
             isHovered={videoHovered}
           />

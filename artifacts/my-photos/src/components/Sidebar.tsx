@@ -1,9 +1,10 @@
 import { Link, useLocation } from "wouter";
-import { Images, Heart, BookImage, Trash2, LogOut, Sun, Moon, Upload, EyeOff, ChevronLeft, ChevronRight, Users } from "lucide-react";
+import { Images, Heart, BookImage, Trash2, LogOut, Sun, Moon, Upload, EyeOff, ChevronLeft, ChevronRight, Users, RefreshCw } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useAuthLogout, useGetPhotoStats } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { formatBytes } from "@/lib/api";
+import { formatBytes, API_BASE } from "@/lib/api";
+import { useState, useEffect } from "react";
 
 
 interface SidebarProps {
@@ -18,6 +19,23 @@ export default function Sidebar({ onUploadClick, darkMode, onToggleDark, collaps
   const [location] = useLocation();
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const [restartCountdown, setRestartCountdown] = useState<number | null>(null);
+
+  // Count down from 10 after restart is triggered, then hard-reload
+  useEffect(() => {
+    if (restartCountdown === null) return;
+    if (restartCountdown <= 0) { window.location.reload(); return; }
+    const t = setTimeout(() => setRestartCountdown(c => (c ?? 0) - 1), 1000);
+    return () => clearTimeout(t);
+  }, [restartCountdown]);
+
+  const handleRestart = async () => {
+    if (restartCountdown !== null) return;
+    try {
+      await fetch(`${API_BASE}/admin/restart`, { method: "POST", credentials: "include" });
+    } catch { /* server restarting — expected */ }
+    setRestartCountdown(10);
+  };
   const logout = useAuthLogout();
   const { data: stats, isLoading: statsLoading } = useGetPhotoStats({
     query: { staleTime: 10 * 60 * 1000 },
@@ -153,6 +171,24 @@ export default function Sidebar({ onUploadClick, darkMode, onToggleDark, collaps
         >
           {darkMode ? <Sun className="w-4 h-4 shrink-0" /> : <Moon className="w-4 h-4 shrink-0" />}
           {!collapsed && (darkMode ? "Light mode" : "Dark mode")}
+        </button>
+
+        <button
+          onClick={handleRestart}
+          disabled={restartCountdown !== null}
+          title={restartCountdown !== null ? `Reloading in ${restartCountdown}s…` : "Restart server + reload app"}
+          className={`w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-sm transition-colors ${
+            restartCountdown !== null
+              ? "text-amber-500 bg-amber-500/10 cursor-not-allowed"
+              : "text-sidebar-foreground hover:bg-sidebar-accent/60"
+          } ${collapsed ? "justify-center" : ""}`}
+        >
+          <RefreshCw className={`w-4 h-4 shrink-0 ${restartCountdown !== null ? "animate-spin" : ""}`} />
+          {!collapsed && (
+            restartCountdown !== null
+              ? `Reloading in ${restartCountdown}s…`
+              : "Restart & reload"
+          )}
         </button>
 
         {user && (

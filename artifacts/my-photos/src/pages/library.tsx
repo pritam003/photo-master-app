@@ -22,6 +22,8 @@ export default function LibraryPage() {
   const [isDroppingFile, setIsDroppingFile] = useState(false);
   const [sortOrder, setSortOrder] = useState<"taken" | "uploaded">("taken");
   const [showGoogleImport, setShowGoogleImport] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const mobileSearchRef = useRef<HTMLInputElement>(null);
   const [memoryDays, setMemoryDays] = useState<any[]>([]);
   const [memoryTodayDow, setMemoryTodayDow] = useState<number>(new Date().getDay());
   const queryClient = useQueryClient();
@@ -262,43 +264,113 @@ export default function LibraryPage() {
       )}
 
       <div className="flex items-center gap-3 px-6 py-3.5 border-b border-border bg-background sticky top-0 z-10 shadow-sm">
-        <h1 className="text-lg font-bold text-foreground tracking-tight">Photos</h1>
-        <div className="flex-1" />
-        <button
-          onClick={() => setShowGoogleImport(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-        >
-          <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg">
-            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-          </svg>
-          Import from Google
-        </button>
-        <select
-          value={sortOrder}
-          onChange={e => handleSortChange(e.target.value as "taken" | "uploaded")}
-          className="text-xs px-2.5 py-1.5 rounded-lg border border-border bg-muted text-foreground cursor-pointer hover:bg-muted/80 transition-colors"
-        >
-          <option value="taken">Date taken</option>
-          <option value="uploaded">Date added</option>
-        </select>
-        <div className="relative w-56">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <input
-            type="search"
-            placeholder="Search photos..."
-            value={search}
-            onChange={e => handleSearchChange(e.target.value)}
-            data-testid="input-search"
-            className="w-full pl-8 pr-8 py-1.5 text-sm bg-muted rounded-xl border border-transparent focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 placeholder:text-muted-foreground transition-all"
-          />
-          {search && (
-            <button onClick={() => handleSearchChange("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-              <X className="w-3.5 h-3.5" />
+
+        {/* ── Mobile: search expanded overlay ── */}
+        {mobileSearchOpen && (
+          <div className="flex sm:hidden items-center gap-2 w-full">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+              <input
+                ref={mobileSearchRef}
+                type="search"
+                placeholder="Search photos..."
+                value={search}
+                onChange={e => handleSearchChange(e.target.value)}
+                data-testid="input-search"
+                className="w-full pl-8 pr-8 py-1.5 text-sm bg-muted rounded-xl border border-transparent focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 placeholder:text-muted-foreground transition-all"
+              />
+              {search && (
+                <button onClick={() => handleSearchChange("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            <button
+              onClick={() => { setMobileSearchOpen(false); handleSearchChange(""); }}
+              className="shrink-0 text-sm text-muted-foreground hover:text-foreground px-1"
+            >
+              Cancel
             </button>
-          )}
+          </div>
+        )}
+
+        {/* ── Normal header (hidden on mobile when search is open) ── */}
+
+        {/* MOBILE header — sleek icon-only actions */}
+        <div className={`${mobileSearchOpen ? "hidden" : "flex"} sm:hidden items-center gap-2 w-full`}>
+          <h1 className="text-lg font-bold text-foreground tracking-tight flex-1">Photos</h1>
+          {/* Google import — icon only */}
+          <button
+            onClick={() => setShowGoogleImport(true)}
+            title="Import from Google Photos"
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
+            <svg viewBox="0 0 24 24" className="w-5 h-5" xmlns="http://www.w3.org/2000/svg">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+            </svg>
+          </button>
+          {/* Sort — compact select */}
+          <select
+            value={sortOrder}
+            onChange={e => handleSortChange(e.target.value as "taken" | "uploaded")}
+            className="text-xs px-2 py-1.5 rounded-lg border border-border bg-muted text-foreground cursor-pointer hover:bg-muted/80 transition-colors max-w-[6.5rem]"
+          >
+            <option value="taken">Date taken</option>
+            <option value="uploaded">Date added</option>
+          </select>
+          {/* Search icon */}
+          <button
+            onClick={() => { setMobileSearchOpen(true); setTimeout(() => mobileSearchRef.current?.focus(), 50); }}
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            aria-label="Search"
+          >
+            <Search className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* DESKTOP header — unchanged original */}
+        <div className="hidden sm:flex items-center gap-3 w-full">
+          <h1 className="text-lg font-bold text-foreground tracking-tight">Photos</h1>
+          <div className="flex-1" />
+          <button
+            onClick={() => setShowGoogleImport(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
+            <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+            </svg>
+            Import from Google
+          </button>
+          <select
+            value={sortOrder}
+            onChange={e => handleSortChange(e.target.value as "taken" | "uploaded")}
+            className="text-xs px-2.5 py-1.5 rounded-lg border border-border bg-muted text-foreground cursor-pointer hover:bg-muted/80 transition-colors"
+          >
+            <option value="taken">Date taken</option>
+            <option value="uploaded">Date added</option>
+          </select>
+          <div className="relative w-56">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            <input
+              type="search"
+              placeholder="Search photos..."
+              value={search}
+              onChange={e => handleSearchChange(e.target.value)}
+              data-testid="input-search"
+              className="w-full pl-8 pr-8 py-1.5 text-sm bg-muted rounded-xl border border-transparent focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 placeholder:text-muted-foreground transition-all"
+            />
+            {search && (
+              <button onClick={() => handleSearchChange("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

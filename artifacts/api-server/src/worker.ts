@@ -19,6 +19,7 @@ import { db, photosTable } from "@workspace/db";
 import { sql, isNull, and, like, eq } from "drizzle-orm";
 import { downloadBlob } from "./lib/azure-storage.js";
 import { analyzePhoto } from "./lib/azure-vision.js";
+import { generateVideoThumbnails } from "./lib/thumbnails.js";
 import { runFaceRecognitionJob } from "./lib/face-recognition.js";
 import { logger } from "./lib/logger.js";
 import exifr from "exifr";
@@ -56,6 +57,45 @@ async function reverseGeocode(lat: number, lon: number): Promise<string> {
 }
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── Video thumbnail backfill pass ─────────────────────────────────────────────
+
+const VIDEO_THUMB_BATCH = 3; // small batch — video download + ffmpeg is heavy
+
+async function runVideoThumbnailPass(): Promise<void> {
+  const rows = await db.execute(sql`
+    SELECT id, blob_name, content_type
+    FROM photos
+    WHERE thumb_blob_name IS NULL
+      AND content_type LIKE 'video/%'
+      AND trashed = false
+    ORDER BY uploaded_at DESC
+    LIMIT ${VIDEO_THUMB_BATCH}
+  `);
+
+  if (rows.rows.length === 0) return;
+  logger.info({ count: rows.rows.length }, "[worker] video-thumb: processing batch");
+
+  for (const row of rows.rows as Array<{ id: string; blob_name: string; content_type: string }>) {
+    try {
+      const buf = await downloadBlob(row.blob_name);
+      const thumbs = await generateVideoThumbnails(buf, row.blob_name);
+      if (thumbs) {
+        await db.execute(sql`
+          UPDATE photos SET thumb_blob_name = ${thumbs.thumbBlobName}, preview_blob_name = ${thumbs.previewBlobName}
+          WHERE id = ${row.id}
+        `);
+        logger.info({ id: row.id }, "[worker] video-thumb: generated");
+      } else {
+        // Mark with an empty sentinel so we don't retry endlessly on videos ffmpeg can't decode
+        await db.execute(sql`UPDATE photos SET thumb_blob_name = '' WHERE id = ${row.id}`);
+        logger.warn({ id: row.id }, "[worker] video-thumb: ffmpeg returned no frame, skipping");
+      }
+    } catch (err) {
+      logger.warn({ id: row.id, err }, "[worker] video-thumb: failed, will retry");
+    }
+  }
+}
 
 // ── Vision tags pass ──────────────────────────────────────────────────────────
 
@@ -214,12 +254,13 @@ if (process.env.FACE_ONLY_MODE === "true") {
     }, FACE_INTERVAL_MS);
   }, 30_000);
 
-  // Vision + GPS: run immediately, then every 30 s
+  // Vision + GPS + video thumbnails: run immediately, then every 30 s
   async function pollLoop() {
     while (!_shutdown) {
       try {
         await runVisionPass();
         await runGpsPass();
+        await runVideoThumbnailPass();
       } catch (err) {
         logger.warn({ err }, "[worker] poll error");
       }

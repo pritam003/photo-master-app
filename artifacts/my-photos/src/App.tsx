@@ -5,6 +5,7 @@ import { useRegisterSW } from "virtual:pwa-register/react";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import Sidebar from "@/components/Sidebar";
+import BottomNav from "@/components/BottomNav";
 import UploadModal from "@/components/UploadModal";
 import { getSharedFiles, clearSharedFiles } from "@/lib/shared-files-db";
 import LibraryPage from "@/pages/library";
@@ -20,6 +21,7 @@ import SharePage from "@/pages/share";
 import SharedAlbumPage from "@/pages/shared-album";
 import NotFound from "@/pages/not-found";
 import { useAuth } from "@/hooks/useAuth";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { ImportProvider } from "@/lib/importContext";
 import ImportProgressBanner from "@/components/ImportProgressBanner";
 
@@ -58,6 +60,7 @@ function AppLayout() {
   const [showUpload, setShowUpload] = useState(false);
   const [initialUploadFiles, setInitialUploadFiles] = useState<File[]>([]);
   const [collapsed, setCollapsed] = useState(false);
+  const isMobile = useIsMobile();
 
   // Handle photos shared from the device gallery via the Web Share Target API.
   // The service worker intercepts POST /share-target, saves files to IndexedDB,
@@ -92,15 +95,21 @@ function AppLayout() {
   }, [darkMode]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar
-        onUploadClick={() => setShowUpload(true)}
-        darkMode={darkMode}
-        onToggleDark={() => setDarkMode(d => !d)}
-        collapsed={collapsed}
-        onCollapse={setCollapsed}
-      />
-      <main className={`flex-1 flex flex-col overflow-hidden ${collapsed ? 'ml-[52px]' : 'ml-64'}`}>
+    <div className="flex h-[100dvh] overflow-hidden bg-background">
+      {!isMobile && (
+        <Sidebar
+          onUploadClick={() => setShowUpload(true)}
+          darkMode={darkMode}
+          onToggleDark={() => setDarkMode(d => !d)}
+          collapsed={collapsed}
+          onCollapse={setCollapsed}
+        />
+      )}
+      <main
+        className={`flex-1 flex flex-col overflow-hidden ${
+          isMobile ? "ml-0 pb-[calc(56px+env(safe-area-inset-bottom))]" : collapsed ? "ml-[52px]" : "ml-64"
+        }`}
+      >
         <Switch>
           <Route path="/" component={LibraryPage} />
           <Route path="/favorites" component={FavoritesPage} />
@@ -113,6 +122,13 @@ function AppLayout() {
           <Route component={NotFound} />
         </Switch>
       </main>
+      {isMobile && (
+        <BottomNav
+          onUploadClick={() => setShowUpload(true)}
+          darkMode={darkMode}
+          onToggleDark={() => setDarkMode(d => !d)}
+        />
+      )}
       {showUpload && (
         <UploadModal
           onClose={() => {
