@@ -74,6 +74,36 @@ registerRoute(
   new StaleWhileRevalidate({ cacheName: "google-fonts" })
 );
 
+// ─── One-time blob-photos cache bust ─────────────────────────────────────────
+// Bump THUMB_CACHE_VERSION whenever thumbnails are regenerated at a new size/quality.
+// On activate, the SW checks if the stored version matches; if not, it clears
+// blob-photos so users automatically get the new compressed thumbnails.
+const THUMB_CACHE_VERSION = "v2-300px-q70";
+const THUMB_VERSION_KEY = "thumb_cache_version";
+
+self.addEventListener("activate", (event: ExtendableEvent) => {
+  event.waitUntil(
+    (async () => {
+      // Read previously stored version from Cache Storage (using a tiny meta cache)
+      const metaCache = await caches.open("sw-meta");
+      const stored = await metaCache.match(THUMB_VERSION_KEY);
+      const storedVersion = stored ? await stored.text() : null;
+
+      if (storedVersion !== THUMB_CACHE_VERSION) {
+        // Thumbnails were regenerated — evict the stale blob-photos cache
+        await caches.delete("blob-photos");
+        // Record the new version
+        await metaCache.put(
+          THUMB_VERSION_KEY,
+          new Response(THUMB_CACHE_VERSION, { headers: { "Content-Type": "text/plain" } })
+        );
+      }
+
+      await self.clients.claim();
+    })()
+  );
+});
+
 // ─── Skip-waiting message ─────────────────────────────────────────────────────
 // When the app sends { type: "SKIP_WAITING" }, the waiting SW activates immediately.
 self.addEventListener("message", (event: MessageEvent) => {
