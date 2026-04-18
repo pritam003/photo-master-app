@@ -584,30 +584,15 @@ router.get("/google/sync/oauth-callback", async (req, res) => {
   }
 
   const tokenData = await tokenRes.json() as { access_token: string; refresh_token?: string; scope?: string };
-  const { refresh_token, access_token: connectAccessToken, scope: grantedScope } = tokenData;
+  const { refresh_token, scope: grantedScope } = tokenData;
 
   if (!refresh_token) {
     logger.warn({ userId: pending.userId }, "[google-sync] no refresh_token returned — user may need to revoke & reconnect");
     return res.redirect(`${frontendUrl}/albums?sync_error=no_refresh_token`);
   }
 
-  // Verify Google actually granted photoslibrary.readonly — if not, the scope isn't on the consent screen
-  if (grantedScope && !grantedScope.includes("photoslibrary.readonly")) {
-    logger.warn({ userId: pending.userId, grantedScope }, "[google-sync] token missing photoslibrary.readonly scope");
-    return res.redirect(`${frontendUrl}/albums?sync_error=missing_library_scope`);
-  }
-
-  // Double-check by calling the Library API with the fresh access token
-  if (connectAccessToken) {
-    const testRes = await fetch(
-      "https://photoslibrary.googleapis.com/v1/mediaItems?pageSize=1",
-      { headers: { Authorization: `Bearer ${connectAccessToken}` } }
-    );
-    if (testRes.status === 403) {
-      logger.warn({ userId: pending.userId }, "[google-sync] Library API returned 403 at connect time — scope not granted");
-      return res.redirect(`${frontendUrl}/albums?sync_error=missing_library_scope`);
-    }
-  }
+  // Log what scopes were actually granted (for debugging)
+  logger.info({ userId: pending.userId, grantedScope }, "[google-sync] token scopes granted");
 
   try {
     const { encryptToken } = await import("../lib/token-crypto.js");
