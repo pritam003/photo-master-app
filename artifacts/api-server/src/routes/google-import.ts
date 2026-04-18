@@ -813,11 +813,10 @@ export async function fetchGoogleLibraryItems(accessToken: string, since: Date):
 
     if (!res.ok) {
       const text = await res.text();
-      if (res.status === 403 && text.includes("PERMISSION_DENIED")) {
-        throw new Error(
-          "Google Photos access token is missing the photoslibrary.readonly scope. " +
-          "Please disconnect and reconnect Google Photos from the Albums page to grant the required permissions."
-        );
+      // Always log the raw response so we can diagnose the exact Google error
+      logger.error({ status: res.status, googleResponse: text }, "[google-sync] Library API error response");
+      if (res.status === 403) {
+        throw new Error(`Library API 403: ${text}`);
       }
       throw new Error(`Library API error (${res.status}): ${text}`);
     }

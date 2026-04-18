@@ -245,11 +245,6 @@ async function runGoogleSyncPass(): Promise<void> {
       // Never let one user's error crash the whole pass
       const errMsg = String(err);
       logger.error({ err: errMsg, userId: row.userId }, "[worker] google-sync: user pass failed");
-      // Stale/insufficient-scope token — clear it so the user is prompted to reconnect
-      if (errMsg.includes("PERMISSION_DENIED") || errMsg.includes("insufficient authentication scopes")) {
-        await db.delete(googleSyncTable).where(eq(googleSyncTable.userId, row.userId)).catch(() => {});
-        logger.warn({ userId: row.userId }, "[worker] google-sync: cleared stale token (insufficient scopes)");
-      }
     }
   }
 }
