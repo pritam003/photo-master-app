@@ -10,7 +10,7 @@ import path from "path";
 import { spawn } from "child_process";
 import { uploadBlob } from "./azure-storage.js";
 
-const THUMB_SIZE = 600;
+const THUMB_SIZE = 400;
 const PREVIEW_WIDTH = 1920;
 
 export interface ThumbnailResult {
@@ -55,7 +55,7 @@ async function resizeAndUpload(
       sharpInstance
         .clone()
         .resize(THUMB_SIZE, THUMB_SIZE, { fit: "cover", position: "centre" })
-        .jpeg({ quality: 82, mozjpeg: true })
+        .jpeg({ quality: 75, mozjpeg: true })
         .toBuffer(),
       sharpInstance
         .clone()
