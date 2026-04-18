@@ -24,6 +24,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ImportProvider } from "@/lib/importContext";
 import ImportProgressBanner from "@/components/ImportProgressBanner";
+import GoogleImportModal from "@/components/GoogleImportModal";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -60,6 +61,7 @@ function AppLayout() {
   const [showUpload, setShowUpload] = useState(false);
   const [initialUploadFiles, setInitialUploadFiles] = useState<File[]>([]);
   const [collapsed, setCollapsed] = useState(false);
+  const [showGoogleImport, setShowGoogleImport] = useState(false);
   const isMobile = useIsMobile();
 
   // Handle photos shared from the device gallery via the Web Share Target API.
@@ -138,7 +140,13 @@ function AppLayout() {
           initialFiles={initialUploadFiles}
         />
       )}
-      <ImportProgressBanner />
+      <ImportProgressBanner onImportMore={() => setShowGoogleImport(true)} />
+      {showGoogleImport && (
+        <GoogleImportModal
+          onClose={() => setShowGoogleImport(false)}
+          allowCreateAlbum
+        />
+      )}
     </div>
   );
 }

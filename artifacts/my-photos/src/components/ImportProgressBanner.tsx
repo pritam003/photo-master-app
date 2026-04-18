@@ -1,11 +1,15 @@
-import { X, Loader2, CheckCircle, AlertCircle, RotateCcw } from "lucide-react";
+import { X, Loader2, CheckCircle, AlertCircle, RotateCcw, RefreshCw } from "lucide-react";
 import { useImport } from "@/lib/importContext";
 
-export default function ImportProgressBanner() {
+interface ImportProgressBannerProps {
+  onImportMore?: () => void;
+}
+
+export default function ImportProgressBanner({ onImportMore }: ImportProgressBannerProps) {
   const { importId, importStatus, clearImport, cancelImport, resumeImport } = useImport();
   if (!importId || !importStatus) return null;
 
-  const { status, albumName, imported, total, errors, resumable } = importStatus;
+  const { status, albumName, imported, total, skipped, errors, resumable } = importStatus;
   const pct = total > 0 ? Math.round(((imported + errors) / total) * 100) : 0;
   const remaining = total > 0 ? total - imported - errors : 0;
   const isDone = status === "done";
@@ -36,7 +40,11 @@ export default function ImportProgressBanner() {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-foreground truncate">
             {isDone
-              ? `Import complete — ${imported} photo${imported !== 1 ? "s" : ""} added${errors ? `, ${errors} skipped` : ""}`
+              ? imported > 0
+                ? `${imported} photo${imported !== 1 ? "s" : ""} imported${skipped ? ` · ${skipped} already existed` : ""}`
+                : skipped
+                ? `All ${skipped} photos already in your library`
+                : "Import complete"
               : isError
               ? resumable
                 ? `Import stopped — ${imported} of ${total} done, ${remaining} remaining`
@@ -81,9 +89,21 @@ export default function ImportProgressBanner() {
           </button>
         )}
         {(isDone || (isError && !resumable)) && (
-          <button onClick={clearImport} className="p-1 rounded-lg hover:bg-muted text-muted-foreground transition-colors shrink-0">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            {isDone && onImportMore && (
+              <button
+                onClick={() => { clearImport(); onImportMore(); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                title="Import more photos from Google"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Import more
+              </button>
+            )}
+            <button onClick={clearImport} className="p-1 rounded-lg hover:bg-muted text-muted-foreground transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         )}
       </div>
     </div>

@@ -20,7 +20,7 @@ interface GoogleImportModalProps {
 interface ImportStatus {
   status: "picking" | "importing" | "done" | "error";
   albumName: string; albumId?: string;
-  total: number; imported: number; errors: number;
+  total: number; imported: number; skipped: number; errors: number;
   message?: string; pickerUri?: string;
 }
 

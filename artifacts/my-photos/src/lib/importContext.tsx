@@ -7,6 +7,7 @@ interface ImportStatus {
   albumId?: string;
   total: number;
   imported: number;
+  skipped: number;
   errors: number;
   message?: string;
   resumable?: boolean;
@@ -86,7 +87,6 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
           setImportStatus(data);
           if (data.status === "done" || data.status === "error") {
             clearInterval(pollRef.current!); pollRef.current = null;
-            if (data.status === "done") setTimeout(() => clearImport(), 3000);
           }
         } catch { /* keep polling */ }
       };
@@ -114,10 +114,6 @@ export function ImportProvider({ children }: { children: React.ReactNode }) {
         if (data.status === "done" || data.status === "error") {
           clearInterval(pollRef.current!);
           pollRef.current = null;
-          // Auto-clear after 3s when done so banner disappears
-          if (data.status === "done") {
-            setTimeout(() => clearImport(), 3000);
-          }
         }
       } catch { /* keep polling */ }
     };

@@ -1,11 +1,10 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
-import { db, photosTable, albumsTable, albumPhotosTable, googleSyncTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, photosTable, albumsTable, albumPhotosTable } from "@workspace/db";
+import { eq, and, inArray } from "drizzle-orm";
 import { uploadBlobFromStream } from "../lib/azure-storage.js";
 import { logger } from "../lib/logger.js";
-import { encryptToken } from "../lib/token-crypto.js";
 import { refreshGoogleAccessToken } from "../lib/google-auth.js";
 
 const router = Router();
@@ -43,6 +42,7 @@ interface ImportStatus {
   albumId?: string;
   total: number;
   imported: number;
+  skipped: number;
   errors: number;
   message?: string;
   pickerUri?: string;
@@ -152,11 +152,31 @@ async function runImport(importId: string, sessionId: string, userId: string, ac
     } while (pageToken);
 
     logger.info({ totalPages: pageCount, totalItems: items.length }, "Finished fetching all media items from Picker API");
-    status.total = items.length;
 
-    if (items.length === 0) {
+    // ── Deduplication: skip photos already imported by googleMediaItemId ────────
+    const allPickerIds = items.map((i: any) => i.id as string).filter(Boolean);
+    let newItems = items;
+    if (allPickerIds.length > 0) {
+      const existing = await db
+        .select({ googleMediaItemId: photosTable.googleMediaItemId })
+        .from(photosTable)
+        .where(and(
+          eq(photosTable.userId, userId),
+          inArray(photosTable.googleMediaItemId, allPickerIds),
+        ));
+      const alreadyImported = new Set(existing.map(r => r.googleMediaItemId));
+      newItems = items.filter((i: any) => !alreadyImported.has(i.id));
+      status.skipped = items.length - newItems.length;
+      logger.info({ total: items.length, skipped: status.skipped, toImport: newItems.length }, "Google Picker deduplication");
+    }
+
+    status.total = newItems.length;
+
+    if (newItems.length === 0) {
       status.status = "done";
-      status.message = "No photos were selected.";
+      status.message = status.skipped > 0
+        ? `All ${status.skipped} selected photos are already in your library.`
+        : "No photos were selected.";
       return;
     }
 
@@ -176,9 +196,9 @@ async function runImport(importId: string, sessionId: string, userId: string, ac
 
     // Save resume data so we can restart from where it fails
     const processedIds = new Set<string>();
-    resumeDataStore.set(importId, { items, processedIds, accessToken, refreshToken, userId, albumId, noAlbum });
+    resumeDataStore.set(importId, { items: newItems, processedIds, accessToken, refreshToken, userId, albumId, noAlbum });
 
-    await processItems(importId, items, processedIds, status, accessToken, refreshToken, userId, albumId);
+    await processItems(importId, newItems, processedIds, status, accessToken, refreshToken, userId, albumId);
 
     if (status.status !== "error") {
       status.status = "done";
@@ -198,7 +218,6 @@ async function runImport(importId: string, sessionId: string, userId: string, ac
   }
 }
 
-/** @deprecated Use refreshGoogleAccessToken from lib/google-auth.ts instead. */
 const refreshAccessToken = refreshGoogleAccessToken;
 
 /** Process a list of items, skipping already-processed IDs. Shared by initial run and resume. */
@@ -300,10 +319,12 @@ async function processItems(
           width: meta?.width ? Number(meta.width) : null,
           height: meta?.height ? Number(meta.height) : null,
           takenAt: item.createTime ? new Date(item.createTime) : null,
+          googleMediaItemId: item.id || null,
         })
+        .onConflictDoNothing()
         .returning();
 
-      if (albumId) {
+      if (albumId && photo) {
         await db
           .insert(albumPhotosTable)
           .values({ albumId, photoId: photo.id })
@@ -395,31 +416,6 @@ router.get("/google/callback", async (req, res) => {
     logger.warn("No refresh_token returned by Google — token refresh after expiry will not be possible");
   }
 
-  // Persist encrypted refresh token for background auto-sync (upsert so re-auth refreshes it).
-  if (refresh_token) {
-    try {
-      await db
-        .insert(googleSyncTable)
-        .values({
-          userId: pending.userId,
-          encryptedRefreshToken: encryptToken(refresh_token),
-          syncEnabled: true,
-          syncIntervalHours: 24,
-          updatedAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: googleSyncTable.userId,
-          set: {
-            encryptedRefreshToken: encryptToken(refresh_token),
-            updatedAt: new Date(),
-          },
-        });
-      logger.info({ userId: pending.userId }, "[google-sync] refresh token saved (encrypted)");
-    } catch (err) {
-      logger.warn({ err: String(err) }, "[google-sync] failed to persist refresh token — auto-sync won't work");
-    }
-  }
-
   // Create a Photos Picker session
   const sessRes = await fetch("https://photospicker.googleapis.com/v1/sessions", {
     method: "POST",
@@ -440,6 +436,7 @@ router.get("/google/callback", async (req, res) => {
     albumName: pending.albumName,
     total: 0,
     imported: 0,
+    skipped: 0,
     errors: 0,
     pickerUri: session.pickerUri,
   });
