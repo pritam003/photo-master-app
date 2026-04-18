@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   RefreshCw, CheckCircle, AlertCircle, Loader2,
-  Clock, Calendar, ToggleLeft, ToggleRight, ChevronDown, Unplug,
+  Clock, Calendar, ToggleLeft, ToggleRight, ChevronDown, Unplug, Link2,
 } from "lucide-react";
 import { API_BASE } from "@/lib/api";
 import { useImport } from "@/lib/importContext";
@@ -56,6 +56,7 @@ export default function GoogleSyncSettings({ albums }: { albums?: Album[] }) {
   const [toggling, setToggling]       = useState(false);
   const [triggering, setTriggering]   = useState(false);
   const [disconnecting, setDisc]      = useState(false);
+  const [connecting, setConnecting]   = useState(false);
   const [error, setError]             = useState<string | null>(null);
   const [showAlbumPicker, setShowAP]  = useState(false);
   const [showIntervalPicker, setShowIP] = useState(false);
@@ -140,6 +141,23 @@ export default function GoogleSyncSettings({ albums }: { albums?: Album[] }) {
     }
   };
 
+  const handleConnect = async () => {
+    setConnecting(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/google/sync/connect`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = await res.json() as { authUrl?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? `${res.status}`);
+      if (data.authUrl) window.location.href = data.authUrl;
+    } catch (e) {
+      setError(String(e));
+      setConnecting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground py-3">
@@ -150,8 +168,36 @@ export default function GoogleSyncSettings({ albums }: { albums?: Album[] }) {
 
   if (!status?.connected) {
     return (
-      <div className="rounded-xl border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
-        <p>Auto-sync is not connected. Use <strong>Import from Google Photos</strong> to sign in — auto-sync will be enabled automatically.</p>
+      <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="w-4 h-4 text-muted-foreground" />
+            <span className="text-sm font-semibold text-foreground">Google Photos Auto-Sync</span>
+          </div>
+        </div>
+        <div className="px-4 py-5 flex flex-col items-start gap-3">
+          <p className="text-sm text-muted-foreground">
+            Connect your Google Photos account to automatically sync new photos daily.
+          </p>
+          {error && (
+            <div className="flex items-center gap-2 text-xs text-destructive">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              {error}
+            </div>
+          )}
+          <button
+            onClick={handleConnect}
+            disabled={connecting}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            {connecting ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Link2 className="w-4 h-4" />
+            )}
+            {connecting ? "Redirecting to Google…" : "Connect Google Photos"}
+          </button>
+        </div>
       </div>
     );
   }

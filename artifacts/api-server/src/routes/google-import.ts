@@ -526,6 +526,96 @@ router.post("/google/import/:id/resume", requireAuth, async (req: any, res) => {
 
 // ── Auto-sync settings endpoints ──────────────────────────────────────────────
 
+// Map of pending OAuth states for the dedicated sync connect flow
+const syncPendingStates = new Map<string, { userId: string; redirectUri: string }>();
+
+// POST /api/google/sync/connect — start dedicated sync-only OAuth (photoslibrary.readonly)
+router.post("/google/sync/connect", requireAuth, async (req: any, res) => {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+    return res.status(503).json({ error: "Google not configured." });
+  }
+  const redirectUri = `${apiOrigin(req)}/api/google/sync/oauth-callback`;
+  const state = randomUUID();
+  syncPendingStates.set(state, { userId: req.currentUser.id, redirectUri });
+  setTimeout(() => syncPendingStates.delete(state), 10 * 60 * 1000);
+
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: "https://www.googleapis.com/auth/photoslibrary.readonly",
+    access_type: "offline",
+    state,
+    prompt: "select_account consent",
+  });
+  res.json({ authUrl: `https://accounts.google.com/o/oauth2/v2/auth?${params}` });
+});
+
+// GET /api/google/sync/oauth-callback — exchange code, persist token, redirect to albums
+router.get("/google/sync/oauth-callback", async (req, res) => {
+  const { code, state, error } = req.query as Record<string, string>;
+  const frontendUrl = APP_URL;
+
+  if (error || !code || !state) {
+    return res.redirect(`${frontendUrl}/albums?sync_error=${encodeURIComponent(error ?? "cancelled")}`);
+  }
+  const pending = syncPendingStates.get(state);
+  if (!pending) {
+    return res.redirect(`${frontendUrl}/albums?sync_error=expired`);
+  }
+  syncPendingStates.delete(state);
+
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: GOOGLE_CLIENT_ID!,
+      client_secret: GOOGLE_CLIENT_SECRET!,
+      redirect_uri: pending.redirectUri,
+      grant_type: "authorization_code",
+    }).toString(),
+  });
+
+  if (!tokenRes.ok) {
+    const errText = await tokenRes.text();
+    logger.error({ err: errText }, "[google-sync] sync connect token exchange failed");
+    return res.redirect(`${frontendUrl}/albums?sync_error=auth_failed`);
+  }
+
+  const { refresh_token } = await tokenRes.json() as { access_token: string; refresh_token?: string };
+  if (!refresh_token) {
+    logger.warn({ userId: pending.userId }, "[google-sync] no refresh_token returned — user may need to revoke & reconnect");
+    return res.redirect(`${frontendUrl}/albums?sync_error=no_refresh_token`);
+  }
+
+  try {
+    const { encryptToken } = await import("../lib/token-crypto.js");
+    await db
+      .insert(googleSyncTable)
+      .values({
+        userId: pending.userId,
+        encryptedRefreshToken: encryptToken(refresh_token),
+        syncEnabled: true,
+        syncIntervalHours: 24,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: googleSyncTable.userId,
+        set: {
+          encryptedRefreshToken: encryptToken(refresh_token),
+          updatedAt: new Date(),
+        },
+      });
+    logger.info({ userId: pending.userId }, "[google-sync] sync-only token saved");
+  } catch (err) {
+    logger.error({ err: String(err) }, "[google-sync] failed to save sync token");
+    return res.redirect(`${frontendUrl}/albums?sync_error=db_error`);
+  }
+
+  return res.redirect(`${frontendUrl}/albums?sync_connected=1`);
+});
+
 // GET /api/google/sync/status — return sync config + last/next sync times
 router.get("/google/sync/status", requireAuth, async (req: any, res) => {
   const [row] = await db

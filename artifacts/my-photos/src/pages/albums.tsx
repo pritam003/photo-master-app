@@ -13,15 +13,28 @@ export default function AlbumsPage() {
   const [activeImportId, setActiveImportId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [shareTarget, setShareTarget] = useState<{ id: string; name: string } | null>(null);
+  const [syncBanner, setSyncBanner] = useState<{ type: "success" | "error"; msg: string } | null>(null);
 
   // Auto-open modal when arriving from Google OAuth callback
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const importId = params.get("import_id");
     const importError = params.get("import_error");
+    const syncConnected = params.get("sync_connected");
+    const syncError = params.get("sync_error");
     if (importId || importError) {
       setActiveImportId(importId);
       setShowImport(true);
+    }
+    if (syncConnected) {
+      setSyncBanner({ type: "success", msg: "Google Photos connected! Auto-sync is now enabled." });
+      setTimeout(() => setSyncBanner(null), 5000);
+    }
+    if (syncError) {
+      setSyncBanner({ type: "error", msg: `Google Photos connection failed: ${syncError.replace(/_/g, " ")}` });
+      setTimeout(() => setSyncBanner(null), 8000);
+    }
+    if (importId || importError || syncConnected || syncError) {
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
@@ -50,6 +63,11 @@ export default function AlbumsPage() {
 
   return (
     <div className="flex-1 flex flex-col h-full">
+      {syncBanner && (
+        <div className={`px-6 py-2 text-sm font-medium text-center ${syncBanner.type === "success" ? "bg-green-500/10 text-green-700 dark:text-green-400" : "bg-destructive/10 text-destructive"}`}>
+          {syncBanner.msg}
+        </div>
+      )}
       <div className="flex items-center gap-3 px-6 py-4 border-b border-border bg-background sticky top-0 z-10">
         <h1 className="text-lg font-semibold text-foreground">Albums</h1>
         <div className="flex-1" />
