@@ -52,13 +52,9 @@ export default function Sidebar({ onUploadClick, darkMode, onToggleDark, collaps
           await reg.update();
         }
       }
-      // Clear only API/app-shell caches — keep blob-photos so thumbnails stay fast
+      // Clear all caches (including blob-photos — thumbnails were re-generated smaller)
       const cacheNames = await caches.keys();
-      await Promise.all(
-        cacheNames
-          .filter(n => n !== "blob-photos")
-          .map(n => caches.delete(n))
-      );
+      await Promise.all(cacheNames.map(n => caches.delete(n)));
     } catch { /* best-effort */ }
 
     setRestartCountdown(10);
