@@ -649,9 +649,15 @@ router.post("/google/sync/trigger", requireAuth, async (req: any, res) => {
           .where(eq(googleSyncTable.userId, row.userId));
       }
     } catch (err: any) {
+      const msg = String(err?.message ?? err);
       status.status = "error";
-      status.message = String(err?.message ?? err);
-      logger.error({ err: String(err), userId: row.userId }, "[google-sync] manual trigger failed");
+      status.message = msg;
+      // If the token lacks the required scope, clear it so the UI prompts reconnect
+      if (msg.includes("PERMISSION_DENIED") || msg.includes("insufficient authentication scopes")) {
+        await db.delete(googleSyncTable).where(eq(googleSyncTable.userId, row.userId)).catch(() => {});
+        status.message = "Google Photos access was revoked or lacks required permissions. Please reconnect via 'Import from Google Photos'.";
+      }
+      logger.error({ err: msg, userId: row.userId }, "[google-sync] manual trigger failed");
     }
   })().catch(console.error);
 });
