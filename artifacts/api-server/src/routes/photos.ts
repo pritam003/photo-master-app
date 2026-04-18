@@ -114,17 +114,14 @@ router.get("/photos/on-this-day", async (req: any, res) => {
     for (const photo of (todayRows as any).rows ?? []) {
       if (todayPhotos.length >= 10) break;
       const url = generateSasUrl(photo.blob_name);
+      const thumbnailUrl = photo.thumb_blob_name ? generateSasUrl(photo.thumb_blob_name) : url;
       todayPhotos.push({
         id: photo.id,
         filename: photo.filename,
         contentType: photo.content_type,
         size: photo.size,
         url,
-        thumbnailUrl: url,
-        favorite: photo.favorite,
-        uploadedAt: photo.uploaded_at,
-        takenAt: photo.taken_at,
-      });
+        thumbnailUrl,
     }
 
     // Fetch up to 20 photos per day-of-week for all 7 days in one query
@@ -145,13 +142,14 @@ router.get("/photos/on-this-day", async (req: any, res) => {
       if (!byDow[d]) byDow[d] = [];
       if (byDow[d].length < 10) {
         const url = generateSasUrl(photo.blob_name);
+        const thumbnailUrl = photo.thumb_blob_name ? generateSasUrl(photo.thumb_blob_name) : url;
         byDow[d].push({
           id: photo.id,
           filename: photo.filename,
           contentType: photo.content_type,
           size: photo.size,
           url,
-          thumbnailUrl: url,
+          thumbnailUrl,
           favorite: photo.favorite,
           uploadedAt: photo.uploaded_at,
           takenAt: photo.taken_at,

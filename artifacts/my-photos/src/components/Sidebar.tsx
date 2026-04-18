@@ -34,6 +34,29 @@ export default function Sidebar({ onUploadClick, darkMode, onToggleDark, collaps
     try {
       await fetch(`${API_BASE}/admin/restart`, { method: "POST", credentials: "include" });
     } catch { /* server restarting — expected */ }
+
+    // Activate any waiting service worker so the next reload gets the latest build,
+    // then wipe all caches so stale assets don't survive.
+    try {
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg) {
+          if (reg.waiting) {
+            // Tell the waiting SW to skip waiting and take control
+            reg.waiting.postMessage({ type: "SKIP_WAITING" });
+            await new Promise<void>(resolve => {
+              navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true });
+              setTimeout(resolve, 2000); // fallback
+            });
+          }
+          await reg.update();
+        }
+      }
+      // Clear ALL caches so the new SW fetches fresh assets
+      const cacheNames = await caches.keys();
+      await Promise.all(cacheNames.map(n => caches.delete(n)));
+    } catch { /* best-effort */ }
+
     setRestartCountdown(10);
   };
   const logout = useAuthLogout();

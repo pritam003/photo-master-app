@@ -74,6 +74,14 @@ registerRoute(
   new StaleWhileRevalidate({ cacheName: "google-fonts" })
 );
 
+// ─── Skip-waiting message ─────────────────────────────────────────────────────
+// When the app sends { type: "SKIP_WAITING" }, the waiting SW activates immediately.
+self.addEventListener("message", (event: MessageEvent) => {
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
 // ─── Web Share Target ─────────────────────────────────────────────────────────
 // The manifest declares share_target with action "/share-target" (POST,
 // multipart/form-data). When the user shares photos from their gallery app,
