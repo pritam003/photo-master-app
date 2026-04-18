@@ -33,11 +33,17 @@ RUN pnpm --filter @workspace/api-server deploy --prod --legacy /app/deploy
 
 # Rebuild native modules in the deploy layout.
 # canvas: needs to relink against system cairo/pango headers in this stage.
-# @tensorflow/tfjs-node: pnpm deploy copies deps/ from the builder stage; the install.js
-#   script fails with EEXIST if deps/ already exists, so we remove it first so it can
-#   re-download libtensorflow and recompile the binding for this exact node binary.
+# @tensorflow/tfjs-node: restore pre-built libtensorflow deps from the builder workspace
+#   to avoid re-downloading from CDN (unreliable in CI). The builder already ran
+#   pnpm rebuild which downloaded and compiled everything; we copy deps/ back so
+#   install.js can skip the download and only recompile the Node.js binding.
 WORKDIR /app/deploy
-RUN find node_modules -path "*tfjs-node/deps" -maxdepth 6 -type d -exec rm -rf {} + 2>/dev/null || true
+RUN find node_modules -path "*tfjs-node/deps" -maxdepth 8 -type d -exec rm -rf {} + 2>/dev/null || true
+RUN bash -c '\
+  SRC=$(find /app/node_modules -path "*/tfjs-node/deps" -maxdepth 10 -type d 2>/dev/null | head -1); \
+  [ -z "$SRC" ] && exit 0; \
+  find . -path "*/tfjs-node" -maxdepth 10 -type d 2>/dev/null | grep -E "tfjs-node$" | \
+    while read dst; do cp -r "$SRC" "$dst/deps"; done' || true
 RUN npm rebuild canvas @tensorflow/tfjs-node 2>&1
 WORKDIR /app
 
