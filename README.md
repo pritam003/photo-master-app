@@ -6,7 +6,9 @@ A Google Photos-inspired, self-hosted photo library. Upload, organize, search, a
 
 ## Demo
 
-https://github.com/pritam003/photo-master-app/raw/main/docs/demo.mp4
+![APhoto UI walkthrough](docs/demo.gif)
+
+> Full-length video: [docs/demo.mp4](https://github.com/pritam003/photo-master-app/raw/main/docs/demo.mp4)
 
 ---
 

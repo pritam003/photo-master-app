@@ -1,13 +1,12 @@
 /**
  * record-demo.mjs
  *
- * Records a walkthrough video of the APhoto UI using Playwright's built-in
- * video recording, then converts the .webm to .mp4 via ffmpeg.
+ * Records a polished slideshow-style walkthrough of the APhoto UI.
+ * Each feature gets a dedicated scene. Output: docs/demo.gif (inline on GitHub)
+ * and docs/demo.mp4 (full quality).
  *
  * Usage:
  *   AUTH_STATE_PATH=auth-state.json node scripts/record-demo.mjs
- *
- * Output: docs/demo.mp4
  */
 
 import { chromium } from "playwright";
@@ -16,183 +15,260 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname  = path.dirname(fileURLToPath(import.meta.url));
 const DOCS_DIR   = path.join(__dirname, "..", "docs");
 const TEMP_DIR   = path.join(DOCS_DIR, ".video-tmp");
 const OUTPUT_MP4 = path.join(DOCS_DIR, "demo.mp4");
+const OUTPUT_GIF = path.join(DOCS_DIR, "demo.gif");
 
 const BASE_URL        = "https://green-river-0bfcd7a0f.1.azurestaticapps.net";
-const VIEWPORT        = { width: 1440, height: 900 };
+const VIEWPORT        = { width: 1280, height: 800 };
 const AUTH_STATE_PATH = process.env.AUTH_STATE_PATH;
 
 if (!AUTH_STATE_PATH || !fs.existsSync(AUTH_STATE_PATH)) {
   console.error("AUTH_STATE_PATH not set or file not found.");
-  console.error("Run: AUTH_STATE_PATH=auth-state.json node scripts/record-demo.mjs");
   process.exit(1);
 }
 
 fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-/** Smooth scroll down by `px` pixels over ~duration ms */
-async function smoothScroll(page, px, duration = 1800) {
-  const steps = 30;
-  const dy = px / steps;
+const pause   = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function smoothScroll(page, px, duration = 1500) {
+  const steps = 25;
+  const dy    = px / steps;
   const delay = duration / steps;
   for (let i = 0; i < steps; i++) {
     await page.mouse.wheel(0, dy);
-    await page.waitForTimeout(delay);
+    await pause(delay);
   }
 }
 
-/** Dismiss any open modal/overlay by pressing Escape and waiting for it to clear */
-async function dismissModals(page) {
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(600);
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(400);
-  // Wait until no fixed overlay is blocking the UI
-  await page.waitForFunction(() => {
-    const overlay = document.querySelector(".fixed.inset-0");
-    return !overlay || overlay.style.display === "none";
-  }, { timeout: 5000 }).catch(() => {});
-  await page.waitForTimeout(300);
-}
-
-/** Wait until visible images are loaded */
 async function waitForImages(page) {
   await page.waitForFunction(() => {
     const imgs = Array.from(document.querySelectorAll("img"));
-    const withSrc = imgs.filter(img => img.src && img.src !== window.location.href);
-    if (withSrc.length === 0) return true;
-    return withSrc.every(img => img.complete && img.naturalWidth > 0);
-  }, { timeout: 20000 }).catch(() => {});
+    const loaded = imgs.filter(img => img.src && img.src !== window.location.href);
+    if (loaded.length === 0) return true;
+    return loaded.every(img => img.complete && img.naturalWidth > 0);
+  }, { timeout: 15000 }).catch(() => {});
 }
+
+async function waitNoOverlay(page) {
+  await page.waitForFunction(
+    () => !document.querySelector("div.fixed.inset-0.z-50"),
+    { timeout: 6000 }
+  ).catch(() => {});
+  await pause(300);
+}
+
+async function goTo(page, path) {
+  await page.goto(`${BASE_URL}${path}`, { waitUntil: "load", timeout: 60000 });
+  await pause(2500);
+  await waitForImages(page);
+  await pause(500);
+}
+
+// ── Scene helpers ──────────────────────────────────────────────────────────────
+
+async function sceneLibrary(page) {
+  console.log("  📷 Library…");
+  await goTo(page, "/");
+  await pause(1000);
+  // Slowly scroll down to reveal the photo grid
+  await smoothScroll(page, 700, 2200);
+  await pause(800);
+  await smoothScroll(page, -700, 1600);
+  await pause(600);
+}
+
+async function sceneMemories(page) {
+  console.log("  🗓  Memories reel…");
+  await goTo(page, "/");
+  // Just show the top reel for 3s — don't click to avoid modal state issues
+  await pause(3000);
+}
+
+async function sceneLightbox(page) {
+  console.log("  🔍 Lightbox…");
+  await goTo(page, "/");
+  // Click the first photo in the grid (below the memories reel)
+  const photos = page.locator("[data-photo-id]");
+  const count = await photos.count();
+  if (count > 0) {
+    // Click the 3rd photo for variety
+    const idx = Math.min(2, count - 1);
+    await photos.nth(idx).click();
+    await pause(2000);
+    await waitForImages(page);
+    await pause(2000);
+    // Navigate to next photo
+    await page.keyboard.press("ArrowRight");
+    await pause(1500);
+    await page.keyboard.press("Escape");
+    await waitNoOverlay(page);
+    await pause(400);
+  }
+}
+
+async function sceneAlbums(page) {
+  console.log("  📁 Albums…");
+  // Navigate via sidebar link
+  await page.getByRole('link', { name: 'Albums' }).first().click();
+  await pause(2500);
+  await waitForImages(page);
+  await pause(1000);
+
+  // Open the first album if any exist
+  const albumCards = page.locator("a[href*='/albums/']");
+  if (await albumCards.count() > 0) {
+    await albumCards.first().click();
+    await pause(2000);
+    await waitForImages(page);
+    await pause(1500);
+  }
+}
+
+async function scenePeople(page) {
+  console.log("  👤 People…");
+  await page.getByRole('link', { name: 'People' }).first().click();
+  await pause(2500);
+  await waitForImages(page);
+  await pause(1000);
+
+  // Open first person if exists
+  const personCards = page.locator("a[href*='/people/']");
+  if (await personCards.count() > 0) {
+    await personCards.first().click();
+    await pause(2000);
+    await waitForImages(page);
+    await pause(1500);
+  }
+}
+
+async function sceneFavorites(page) {
+  console.log("  ❤️  Favorites…");
+  await page.getByRole('link', { name: 'Favorites' }).first().click();
+  await pause(2500);
+  await waitForImages(page);
+  await pause(1000);
+}
+
+async function sceneArchive(page) {
+  console.log("  🔒 Archive…");
+  await page.getByRole('link', { name: 'Archive' }).first().click();
+  await pause(2500);
+  await pause(1200); // show the TOTP unlock screen
+}
+
+async function sceneSearch(page) {
+  console.log("  🔎 Search…");
+  // Full reload to clean state
+  await goTo(page, "/");
+  const searchInput = page.locator("input[data-testid='input-search']");
+  if (await searchInput.isVisible()) {
+    await searchInput.click();
+    await pause(400);
+    await page.keyboard.type("microsoft", { delay: 110 });
+    await pause(2500);
+    await waitForImages(page);
+    await pause(1500);
+    // Clear
+    await searchInput.click({ clickCount: 3 });
+    await page.keyboard.press("Backspace");
+    await pause(600);
+  }
+}
+
+async function sceneUpload(page) {
+  console.log("  ⬆️  Upload…");
+  await goTo(page, "/");
+  const uploadBtn = page.locator("[data-testid='button-upload']");
+  if (await uploadBtn.isVisible()) {
+    await uploadBtn.click();
+    await pause(2500);
+    // Close via the X button in the modal header
+    const closeBtn = page.locator("div.fixed.inset-0.z-50 button").first();
+    if (await closeBtn.isVisible()) {
+      await closeBtn.click();
+    } else {
+      await page.keyboard.press("Escape");
+    }
+    await waitNoOverlay(page);
+  }
+}
+
+async function sceneTrash(page) {
+  console.log("  🗑  Trash…");
+  await page.getByRole('link', { name: 'Trash' }).first().click();
+  await pause(2500);
+  await waitForImages(page);
+  await pause(1000);
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
   const browser = await chromium.launch({ headless: true });
-
   const context = await browser.newContext({
     storageState: AUTH_STATE_PATH,
     viewport: VIEWPORT,
-    recordVideo: {
-      dir: TEMP_DIR,
-      size: VIEWPORT,
-    },
+    recordVideo: { dir: TEMP_DIR, size: VIEWPORT },
   });
 
   const page = await context.newPage();
 
-  // ── 1. Library ─────────────────────────────────────────────────────────────
-  console.log("▶ Library…");
-  await page.goto(`${BASE_URL}/`, { waitUntil: "load", timeout: 60000 });
-  await page.waitForTimeout(3000);
-  await waitForImages(page);
-  await page.waitForTimeout(1500); // let Memories reel settle
+  console.log("\nRecording demo…\n");
 
-  // Scroll down to show the photo grid
-  await smoothScroll(page, 600, 2000);
-  await page.waitForTimeout(1000);
+  await sceneLibrary(page);
+  await sceneMemories(page);
+  await sceneLightbox(page);
+  await sceneAlbums(page);
+  await scenePeople(page);
+  await sceneFavorites(page);
+  await sceneArchive(page);
+  await sceneSearch(page);
+  await sceneUpload(page);
+  await sceneTrash(page);
 
-  // Scroll back up
-  await smoothScroll(page, -600, 1200);
-  await page.waitForTimeout(800);
+  // End on the library
+  await goTo(page, "/");
+  await pause(1000);
 
-  // ── 2. Scroll through the library ──────────────────────────────────────────
-  console.log("▶ Scrolling library…");
-  await smoothScroll(page, 800, 2500);
-  await page.waitForTimeout(1200);
-  await smoothScroll(page, -800, 1800);
-  await page.waitForTimeout(800);
-
-  // ── 3. Albums ──────────────────────────────────────────────────────────────
-  console.log("▶ Albums…");
-  await page.click("text=Albums");
-  await page.waitForTimeout(2500);
-  await waitForImages(page);
-  await page.waitForTimeout(1000);
-
-  // ── 4. People ──────────────────────────────────────────────────────────────
-  console.log("▶ People…");
-  await page.click("text=People");
-  await page.waitForTimeout(2500);
-  await waitForImages(page);
-  await page.waitForTimeout(1000);
-
-  // ── 5. Favorites ───────────────────────────────────────────────────────────
-  console.log("▶ Favorites…");
-  await page.click("text=Favorites");
-  await page.waitForTimeout(2500);
-  await waitForImages(page);
-  await page.waitForTimeout(1000);
-
-  // ── 6. Upload modal — full page reload to clear any SPA state ─────────────
-  console.log("▶ Upload modal…");
-  await page.goto(`${BASE_URL}/`, { waitUntil: "load", timeout: 60000 });
-  await page.waitForTimeout(3000);
-  await waitForImages(page);
-  const uploadBtn = page.locator("[data-testid='button-upload']");
-  if (await uploadBtn.isVisible()) {
-    await uploadBtn.click();
-    await page.waitForTimeout(2500);
-    // Close via the X button in the modal header
-    await page.locator("div.fixed.inset-0 button").first().click();
-    await page.waitForTimeout(1000);
-    // Wait until the overlay is gone
-    await page.waitForFunction(
-      () => !document.querySelector("div.fixed.inset-0.z-50"),
-      { timeout: 8000 }
-    ).catch(() => {});
-    await page.waitForTimeout(500);
-  }
-
-  // ── 7. Search ──────────────────────────────────────────────────────────────
-  console.log("▶ Search…");
-  const searchInput = page.locator("input[placeholder*='earch']");
-  if (await searchInput.isVisible()) {
-    await searchInput.click();
-    await page.waitForTimeout(400);
-    await page.keyboard.type("2025", { delay: 120 });
-    await page.waitForTimeout(2500);
-    await waitForImages(page);
-    await page.waitForTimeout(800);
-    // Clear search
-    await searchInput.click({ clickCount: 3 });
-    await page.keyboard.press("Backspace");
-    await page.waitForTimeout(800);
-  }
-
-  // ── 8. Trash ───────────────────────────────────────────────────────────────
-  console.log("▶ Trash…");
-  await page.click("text=Trash");
-  await page.waitForTimeout(2000);
-  await page.waitForTimeout(800);
-
-  // ── 9. Back to library — end ───────────────────────────────────────────────
-  await page.click("text=Photos");
-  await page.waitForTimeout(1500);
-
-  // Stop recording
   await context.close();
   await browser.close();
 
-  // Find the recorded .webm file
+  // Find .webm
   const files = fs.readdirSync(TEMP_DIR).filter(f => f.endsWith(".webm"));
-  if (files.length === 0) {
-    console.error("No .webm file found in", TEMP_DIR);
-    process.exit(1);
-  }
+  if (files.length === 0) { console.error("No .webm found"); process.exit(1); }
   const webm = path.join(TEMP_DIR, files[0]);
-  console.log(`\nConverting ${files[0]} → demo.mp4…`);
 
+  // ── Convert to MP4 ──────────────────────────────────────────────────────────
+  console.log("\nConverting to MP4…");
   execSync(
-    `ffmpeg -y -i "${webm}" -vf "fps=30,scale=1440:-2" -c:v libx264 -crf 22 -preset fast -pix_fmt yuv420p "${OUTPUT_MP4}"`,
+    `ffmpeg -y -i "${webm}" -vf "fps=30,scale=1280:-2" -c:v libx264 -crf 20 -preset fast -pix_fmt yuv420p "${OUTPUT_MP4}"`,
     { stdio: "inherit" }
   );
+  console.log(`✓  docs/demo.mp4  (${(fs.statSync(OUTPUT_MP4).size / 1e6).toFixed(1)} MB)`);
 
-  // Clean up temp
+  // ── Convert to optimised GIF (GitHub inline playback) ──────────────────────
+  console.log("\nConverting to GIF…");
+  const paletteFile = path.join(TEMP_DIR, "palette.png");
+  // Step 1: generate optimal palette
+  execSync(
+    `ffmpeg -y -i "${webm}" -vf "fps=12,scale=960:-1:flags=lanczos,palettegen=stats_mode=diff" "${paletteFile}"`,
+    { stdio: "inherit" }
+  );
+  // Step 2: apply palette
+  execSync(
+    `ffmpeg -y -i "${webm}" -i "${paletteFile}" -lavfi "fps=12,scale=960:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5" -loop 0 "${OUTPUT_GIF}"`,
+    { stdio: "inherit" }
+  );
+  console.log(`✓  docs/demo.gif  (${(fs.statSync(OUTPUT_GIF).size / 1e6).toFixed(1)} MB)`);
+
   fs.rmSync(TEMP_DIR, { recursive: true, force: true });
-
-  console.log(`\n✓ Saved: docs/demo.mp4`);
+  console.log("\nDone!\n");
 }
 
 main().catch(err => { console.error(err); process.exit(1); });
+
+
