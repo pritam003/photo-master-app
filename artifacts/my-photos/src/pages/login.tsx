@@ -79,6 +79,22 @@ const QUOTES = [
   { text: "A photograph is a pause button on life.", author: "— Ty Holland" },
 ];
 
+const REGIONS = [
+  { label: "🇺🇸 East US",               value: "eastus" },
+  { label: "🇺🇸 West US 2",             value: "westus2" },
+  { label: "🇺🇸 Central US",            value: "centralus" },
+  { label: "🇬🇧 UK South",              value: "uksouth" },
+  { label: "🇩🇪 West Europe",           value: "westeurope" },
+  { label: "🇩🇪 Germany West Central",  value: "germanywestcentral" },
+  { label: "🇦🇺 Australia East",        value: "australiaeast" },
+  { label: "🇸🇬 Southeast Asia",        value: "southeastasia" },
+  { label: "🇮🇳 Central India",         value: "centralindia" },
+  { label: "🇧🇷 Brazil South",          value: "brazilsouth" },
+];
+
+const TEMPLATE_URL =
+  "https://raw.githubusercontent.com/pritam003/photo-master-app/main/infra/azuredeploy.json";
+
 export default function LoginPage() {
   const { isAuthenticated, isLoading } = useAuth();
   const [, navigate] = useLocation();
@@ -117,6 +133,11 @@ export default function LoginPage() {
     const p = new URLSearchParams(window.location.search);
     return p.get("error");
   });
+
+  // Deploy-to-Azure modal
+  const [showDeployModal, setShowDeployModal] = useState(false);
+  const [deployAppName, setDeployAppName] = useState("myphotos");
+  const [deployRegion, setDeployRegion] = useState("eastus");
 
   useEffect(() => {
     if (!isLoading && isAuthenticated) navigate("/");
@@ -390,6 +411,35 @@ export default function LoginPage() {
             </button>
           </div>
 
+          {/* ── Deploy to Azure ─────────────────────────────────── */}
+          <div className="mt-3" style={{ animation:"fade-up 0.5s 0.32s both" }}>
+            <div className="flex items-center gap-2 my-3">
+              <div className="flex-1 h-px" style={{ background:"rgba(139,92,246,0.12)" }} />
+              <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">or</span>
+              <div className="flex-1 h-px" style={{ background:"rgba(139,92,246,0.12)" }} />
+            </div>
+            <button
+              onClick={() => setShowDeployModal(true)}
+              data-testid="button-deploy-azure"
+              className="group w-full flex items-center gap-3 px-5 py-3.5 rounded-2xl font-semibold transition-all duration-300 hover:-translate-y-0.5"
+              style={{
+                background:"linear-gradient(135deg,#0078d4 0%,#005a9e 100%)",
+                boxShadow:"0 8px 28px rgba(0,120,212,0.35)",
+                color:"#fff",
+              }}>
+              <svg viewBox="0 0 24 24" className="w-5 h-5 shrink-0" fill="currentColor">
+                <path d="M13.05 4.24L7.4 16.72l1.94.01 1.18-2.83h5.37l1.2 2.82 1.91-.01-5.62-12.47zm-.03 3.49l1.9 4.5h-3.75l1.85-4.5zM4 6.38A9.98 9.98 0 0 0 2 12c0 5.52 4.48 10 10 10s10-4.48 10-10S17.52 2 12 2a9.98 9.98 0 0 0-7.18 3.06L6.3 6.54A7.958 7.958 0 0 1 12 4c4.42 0 8 3.58 8 8s-3.58 8-8 8-8-3.58-8-8c0-1.8.6-3.46 1.6-4.8L4 6.38z"/>
+              </svg>
+              <div className="text-left flex-1">
+                <p className="text-sm font-bold">Deploy to Azure</p>
+                <p className="text-xs opacity-70 font-normal mt-0.5">One-click self-host setup</p>
+              </div>
+              <svg viewBox="0 0 24 24" className="w-4 h-4 opacity-60 group-hover:opacity-100 group-hover:translate-x-1 transition-all duration-200 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M9 18l6-6-6-6"/>
+              </svg>
+            </button>
+          </div>
+
           <p className="text-[11px] text-center text-slate-400 mt-6"
             style={{ animation:"fade-up 0.5s 0.38s both" }}>
             By signing in you agree to our{" "}
@@ -399,6 +449,150 @@ export default function LoginPage() {
           </p>
         </div>
       </div>
+
+      {/* ── Deploy-to-Azure Modal ────────────────────────────────────── */}
+      {showDeployModal && (
+        <div
+          className="absolute inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background:"rgba(15,10,30,0.65)", backdropFilter:"blur(8px)", WebkitBackdropFilter:"blur(8px)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowDeployModal(false); }}
+        >
+          <div
+            className="w-full max-w-md overflow-y-auto"
+            style={{
+              maxHeight:"90vh",
+              background:"rgba(255,255,255,0.96)",
+              backdropFilter:"blur(24px)",
+              borderRadius:24,
+              padding:"1.75rem",
+              boxShadow:"0 32px 80px rgba(0,0,0,0.22)",
+              animation:"card-enter 0.35s cubic-bezier(0.16,1,0.3,1) both",
+            }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl flex items-center justify-center"
+                  style={{ background:"linear-gradient(135deg,#0078d4,#005a9e)" }}>
+                  <svg viewBox="0 0 24 24" className="w-4 h-4 text-white" fill="currentColor">
+                    <path d="M13.05 4.24L7.4 16.72l1.94.01 1.18-2.83h5.37l1.2 2.82 1.91-.01-5.62-12.47zm-.03 3.49l1.9 4.5h-3.75l1.85-4.5z"/>
+                  </svg>
+                </div>
+                <h2 className="text-base font-bold text-slate-800">Deploy APhoto to Azure</h2>
+              </div>
+              <button
+                onClick={() => setShowDeployModal(false)}
+                className="w-7 h-7 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+
+            {/* App name */}
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">App name</label>
+              <input
+                type="text"
+                value={deployAppName}
+                onChange={(e) => setDeployAppName(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 16))}
+                placeholder="myphotos"
+                className="w-full px-3.5 py-2.5 rounded-xl text-sm text-slate-800 font-mono outline-none transition-all"
+                style={{
+                  border:"1.5px solid rgba(139,92,246,0.25)",
+                  background:"rgba(139,92,246,0.03)",
+                }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(0,120,212,0.6)"; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(139,92,246,0.25)"; }}
+              />
+              <p className="text-[10px] text-slate-400 mt-1">Lowercase letters &amp; numbers, 3–16 chars — drives all resource names.</p>
+            </div>
+
+            {/* Region */}
+            <div className="mb-5">
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Azure region</label>
+              <select
+                value={deployRegion}
+                onChange={(e) => setDeployRegion(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl text-sm text-slate-800 outline-none transition-all appearance-none"
+                style={{
+                  border:"1.5px solid rgba(139,92,246,0.25)",
+                  background:"rgba(139,92,246,0.03)",
+                  backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
+                  backgroundRepeat:"no-repeat",
+                  backgroundPosition:"right 12px center",
+                  backgroundSize:"16px",
+                  paddingRight:"2.5rem",
+                }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(0,120,212,0.6)"; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(139,92,246,0.25)"; }}
+              >
+                {REGIONS.map(r => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Resources that will be created */}
+            <div className="mb-5">
+              <p className="text-xs font-semibold text-slate-600 mb-2">Resources that will be created in <span className="text-violet-600">{deployAppName || "myphotos"}-rg</span></p>
+              <div className="rounded-xl overflow-hidden" style={{ border:"1px solid rgba(139,92,246,0.12)" }}>
+                {([
+                  ["🗄️", "PostgreSQL Flexible Server", `${deployAppName || "myphotos"}-db`, "~$13/mo"],
+                  ["📦", "Container Registry (Basic)", `${(deployAppName || "myphotos").replace(/-/g,"")}acr`, "~$5/mo"],
+                  ["☁️", "Storage Account", `${(deployAppName || "myphotos").replace(/-/g,"")}store`.slice(0,24), "Free tier"],
+                  ["🚀", "Container App — API", `${deployAppName || "myphotos"}-api`, "Pay-per-use"],
+                  ["⚙️", "Container App — Worker", `${deployAppName || "myphotos"}-worker`, "Pay-per-use"],
+                  ["🌐", "Static Web App", `${deployAppName || "myphotos"}-web`, "Free"],
+                  ["👁️", "Computer Vision", `${deployAppName || "myphotos"}-vision`, "Free tier"],
+                  ["🔑", "Managed Identity", `${deployAppName || "myphotos"}-id`, "Free"],
+                ] as [string,string,string,string][]).map(([icon, type, name, cost], i) => (
+                  <div key={name} className="flex items-center gap-2.5 px-3 py-2 text-xs" style={{
+                    borderTop: i === 0 ? "none" : "1px solid rgba(139,92,246,0.07)",
+                    background: i % 2 === 0 ? "rgba(249,250,251,0.8)" : "#fff",
+                  }}>
+                    <span className="text-base leading-none">{icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-slate-700 truncate">{name}</p>
+                      <p className="text-slate-400 truncate">{type}</p>
+                    </div>
+                    <span className="text-[10px] font-medium shrink-0" style={{ color: cost === "Free" || cost === "Free tier" ? "#16a34a" : "#6b7280" }}>{cost}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1.5">Estimated total: <span className="font-semibold text-slate-600">~$18–25/mo</span> (varies by usage)</p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2.5">
+              <button
+                onClick={() => setShowDeployModal(false)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+                style={{ border:"1.5px solid rgba(0,0,0,0.1)" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const name = deployAppName || "myphotos";
+                  const url = `https://portal.azure.com/#create/Microsoft.Template/uri/${encodeURIComponent(TEMPLATE_URL)}` +
+                    `?appName=${encodeURIComponent(name)}&location=${encodeURIComponent(deployRegion)}`;
+                  window.open(url, "_blank", "noopener,noreferrer");
+                }}
+                disabled={!deployAppName || deployAppName.length < 3}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  background:"linear-gradient(135deg,#0078d4 0%,#005a9e 100%)",
+                  boxShadow:"0 6px 20px rgba(0,120,212,0.35)",
+                }}
+              >
+                Open Azure Portal →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

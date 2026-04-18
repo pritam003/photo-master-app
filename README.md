@@ -1,5 +1,7 @@
 # APhoto — Self-Hosted Personal Photo Library
 
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fpritam003%2Fphoto-master-app%2Fmain%2Finfra%2Fazuredeploy.json)
+
 A Google Photos-inspired, self-hosted photo library. Upload, organize, search, and share your photos — with AI tagging, face recognition, and Google Takeout import. Runs on your own infrastructure using Azure storage and PostgreSQL.
 
 ---
@@ -742,7 +744,52 @@ GET  /shared/album/:token        → redirects to Google SSO if not authenticate
 
 ## Deployment
 
-### Build the API Docker image
+### One-click deploy to Azure
+
+The easiest way to self-host APhoto is the **Deploy to Azure** button — it creates all required resources in your subscription in one click:
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fpritam003%2Fphoto-master-app%2Fmain%2Finfra%2Fazuredeploy.json)
+
+Or click **Deploy to Azure** on the login page of any running APhoto instance.
+
+**Resources created** (all inside a single resource group `<appName>-rg`):
+
+| Resource | Name pattern | Est. cost |
+|---|---|---|
+| PostgreSQL Flexible Server | `<appName>-db` | ~$13/mo |
+| Container Registry (Basic) | `<appName>acr` | ~$5/mo |
+| Storage Account (LRS) | `<appName>store` | Free tier |
+| Container App — API | `<appName>-api` | Pay-per-use |
+| Container App — Worker | `<appName>-worker` | Pay-per-use |
+| Static Web App (Free) | `<appName>-web` | Free |
+| Computer Vision (F0) | `<appName>-vision` | Free tier |
+| Managed Identity | `<appName>-id` | Free |
+
+**Estimated total: ~$18–25/mo** (varies by usage and region).
+
+**After deployment:**
+
+1. Push the Docker image to the new ACR and update both Container Apps:
+   ```bash
+   az acr login --name <appName>acr
+   docker build -f artifacts/api-server/Dockerfile -t <appName>acr.azurecr.io/api:latest .
+   docker push <appName>acr.azurecr.io/api:latest
+   az containerapp update --name <appName>-api  --resource-group <appName>-rg --image <appName>acr.azurecr.io/api:latest
+   az containerapp update --name <appName>-worker --resource-group <appName>-rg --image <appName>acr.azurecr.io/api:latest
+   ```
+2. Build and deploy the frontend SPA:
+   ```bash
+   VITE_API_BASE=$(az containerapp show -n <appName>-api -g <appName>-rg --query properties.configuration.ingress.fqdn -o tsv | sed 's/^/https:\/\//') \
+     pnpm --filter my-photos build
+   npx @azure/static-web-apps-cli deploy artifacts/my-photos/dist --deployment-token <swa-token>
+   ```
+3. (Optional) Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` on both Container Apps to enable Google login.
+
+---
+
+### Manual / bring-your-own infrastructure
+
+
 
 ```bash
 # From repo root

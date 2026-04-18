@@ -1,0 +1,949 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "languageVersion": "2.0",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.42.1.51946",
+      "templateHash": "11556330246363594352"
+    }
+  },
+  "parameters": {
+    "appName": {
+      "type": "string",
+      "defaultValue": "myphotos",
+      "minLength": 3,
+      "maxLength": 16,
+      "metadata": {
+        "description": "Short name for your app — drives all resource names. Lowercase letters and numbers only, 3-16 chars."
+      }
+    },
+    "location": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure region to deploy all resources into."
+      }
+    },
+    "googleClientId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Google OAuth Client ID (optional — leave blank to skip Google login)."
+      }
+    },
+    "googleClientSecret": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Google OAuth Client Secret (optional)."
+      }
+    }
+  },
+  "variables": {
+    "sessionSecret": "[uniqueString(subscription().id, parameters('appName'), 'session')]",
+    "jwtSecret": "[uniqueString(subscription().id, parameters('appName'), 'jwt')]"
+  },
+  "resources": {
+    "rg": {
+      "type": "Microsoft.Resources/resourceGroups",
+      "apiVersion": "2023-07-01",
+      "name": "[format('{0}-rg', parameters('appName'))]",
+      "location": "[parameters('location')]"
+    },
+    "identity": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "identity",
+      "resourceGroup": "[format('{0}-rg', parameters('appName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "appName": {
+            "value": "[parameters('appName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "8390939261024750842"
+            }
+          },
+          "parameters": {
+            "appName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+              "apiVersion": "2023-01-31",
+              "name": "[format('{0}-id', parameters('appName'))]",
+              "location": "[parameters('location')]"
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(resourceGroup().id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('appName'))), 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('appName'))), '2023-01-31').principalId]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('appName')))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "identityId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('appName')))]"
+            },
+            "identityClientId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('appName'))), '2023-01-31').clientId]"
+            },
+            "identityPrincipalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-id', parameters('appName'))), '2023-01-31').principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "storage": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "storage",
+      "resourceGroup": "[format('{0}-rg', parameters('appName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "appName": {
+            "value": "[parameters('appName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "1987797817324064035"
+            }
+          },
+          "parameters": {
+            "appName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "storageAccountName": "[take(toLower(replace(format('{0}store', parameters('appName')), '-', '')), 24)]",
+            "containerName": "photos"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2023-01-01",
+              "name": "[variables('storageAccountName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "allowBlobPublicAccess": false,
+                "minimumTlsVersion": "TLS1_2",
+                "supportsHttpsTrafficOnly": true,
+                "accessTier": "Hot"
+              }
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}', variables('storageAccountName'), 'default')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', variables('containerName'))]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "storageAccountName": {
+              "type": "string",
+              "value": "[variables('storageAccountName')]"
+            },
+            "containerName": {
+              "type": "string",
+              "value": "[variables('containerName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "registry": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "registry",
+      "resourceGroup": "[format('{0}-rg', parameters('appName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "appName": {
+            "value": "[parameters('appName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.0",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "6537794794405660643"
+            }
+          },
+          "parameters": {
+            "appName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "registryName": "[take(toLower(replace(format('{0}acr', parameters('appName')), '-', '')), 50)]"
+          },
+          "resources": {
+            "registry": {
+              "type": "Microsoft.ContainerRegistry/registries",
+              "apiVersion": "2023-07-01",
+              "name": "[variables('registryName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Basic"
+              },
+              "properties": {
+                "adminUserEnabled": true,
+                "publicNetworkAccess": "Enabled",
+                "zoneRedundancy": "Disabled"
+              }
+            }
+          },
+          "outputs": {
+            "registryName": {
+              "type": "string",
+              "value": "[variables('registryName')]"
+            },
+            "loginServer": {
+              "type": "string",
+              "value": "[reference('registry').loginServer]"
+            },
+            "adminUsername": {
+              "type": "string",
+              "value": "[listCredentials('registry', '2023-07-01').username]"
+            },
+            "adminPassword": {
+              "type": "securestring",
+              "value": "[listCredentials('registry', '2023-07-01').passwords[0].value]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "database": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "database",
+      "resourceGroup": "[format('{0}-rg', parameters('appName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "appName": {
+            "value": "[parameters('appName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "12585253790350109494"
+            }
+          },
+          "parameters": {
+            "appName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "dbServerName": "[format('{0}-db', parameters('appName'))]",
+            "dbName": "aphoto"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+              "apiVersion": "2023-06-01-preview",
+              "name": "[variables('dbServerName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard_B1ms",
+                "tier": "Burstable"
+              },
+              "properties": {
+                "version": "16",
+                "storage": {
+                  "storageSizeGB": 32
+                },
+                "backup": {
+                  "backupRetentionDays": 7,
+                  "geoRedundantBackup": "Disabled"
+                },
+                "highAvailability": {
+                  "mode": "Disabled"
+                },
+                "authConfig": {
+                  "activeDirectoryAuth": "Enabled",
+                  "passwordAuth": "Disabled"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
+              "apiVersion": "2023-06-01-preview",
+              "name": "[format('{0}/{1}', variables('dbServerName'), variables('dbName'))]",
+              "properties": {
+                "charset": "UTF8",
+                "collation": "en_US.utf8"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('dbServerName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
+              "apiVersion": "2023-06-01-preview",
+              "name": "[format('{0}/{1}', variables('dbServerName'), 'AllowAzureServices')]",
+              "properties": {
+                "startIpAddress": "0.0.0.0",
+                "endIpAddress": "0.0.0.0"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('dbServerName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "serverName": {
+              "type": "string",
+              "value": "[variables('dbServerName')]"
+            },
+            "serverFqdn": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('dbServerName')), '2023-06-01-preview').fullyQualifiedDomainName]"
+            },
+            "databaseName": {
+              "type": "string",
+              "value": "[variables('dbName')]"
+            },
+            "connectionStringTemplate": {
+              "type": "string",
+              "value": "[format('postgresql://{0}/{1}?sslmode=require', reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('dbServerName')), '2023-06-01-preview').fullyQualifiedDomainName, variables('dbName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "vision": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "vision",
+      "resourceGroup": "[format('{0}-rg', parameters('appName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "appName": {
+            "value": "[parameters('appName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.0",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "14275076179424216648"
+            }
+          },
+          "parameters": {
+            "appName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "resources": {
+            "computerVision": {
+              "type": "Microsoft.CognitiveServices/accounts",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}-vision', parameters('appName'))]",
+              "location": "[parameters('location')]",
+              "kind": "ComputerVision",
+              "sku": {
+                "name": "F0"
+              },
+              "properties": {
+                "publicNetworkAccess": "Enabled",
+                "customSubDomainName": "[format('{0}vision', parameters('appName'))]"
+              }
+            }
+          },
+          "outputs": {
+            "endpoint": {
+              "type": "string",
+              "value": "[reference('computerVision').endpoint]"
+            },
+            "key": {
+              "type": "securestring",
+              "value": "[listKeys('computerVision', '2023-05-01').key1]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "staticWebApp": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "staticWebApp",
+      "resourceGroup": "[format('{0}-rg', parameters('appName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "appName": {
+            "value": "[parameters('appName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "14040000307993249383"
+            }
+          },
+          "parameters": {
+            "appName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Web/staticSites",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}-web', parameters('appName'))]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Free",
+                "tier": "Free"
+              },
+              "properties": {
+                "stagingEnvironmentPolicy": "Disabled",
+                "allowConfigFileUpdates": true,
+                "buildProperties": {
+                  "skipGithubActionWorkflowGeneration": true
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "staticWebAppName": {
+              "type": "string",
+              "value": "[format('{0}-web', parameters('appName'))]"
+            },
+            "defaultHostname": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/staticSites', format('{0}-web', parameters('appName'))), '2023-01-01').defaultHostname]"
+            },
+            "deploymentToken": {
+              "type": "string",
+              "value": "[listSecrets(resourceId('Microsoft.Web/staticSites', format('{0}-web', parameters('appName'))), '2023-01-01').properties.apiKey]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "containerApps": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "containerApps",
+      "resourceGroup": "[format('{0}-rg', parameters('appName'))]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "appName": {
+            "value": "[parameters('appName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "registryLoginServer": {
+            "value": "[reference('registry').outputs.loginServer.value]"
+          },
+          "registryUsername": {
+            "value": "[reference('registry').outputs.adminUsername.value]"
+          },
+          "registryPassword": {
+            "value": "[listOutputsWithSecureValues('registry', '2025-04-01').adminPassword]"
+          },
+          "identityId": {
+            "value": "[reference('identity').outputs.identityId.value]"
+          },
+          "identityClientId": {
+            "value": "[reference('identity').outputs.identityClientId.value]"
+          },
+          "storageAccountName": {
+            "value": "[reference('storage').outputs.storageAccountName.value]"
+          },
+          "storageContainerName": {
+            "value": "[reference('storage').outputs.containerName.value]"
+          },
+          "dbConnectionString": {
+            "value": "[reference('database').outputs.connectionStringTemplate.value]"
+          },
+          "googleClientId": {
+            "value": "[parameters('googleClientId')]"
+          },
+          "googleClientSecret": {
+            "value": "[parameters('googleClientSecret')]"
+          },
+          "sessionSecret": {
+            "value": "[variables('sessionSecret')]"
+          },
+          "jwtSecret": {
+            "value": "[variables('jwtSecret')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "6180586257489361582"
+            }
+          },
+          "parameters": {
+            "appName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "registryLoginServer": {
+              "type": "string"
+            },
+            "registryUsername": {
+              "type": "string"
+            },
+            "registryPassword": {
+              "type": "securestring"
+            },
+            "identityId": {
+              "type": "string"
+            },
+            "identityClientId": {
+              "type": "string"
+            },
+            "storageAccountName": {
+              "type": "string"
+            },
+            "storageContainerName": {
+              "type": "string"
+            },
+            "dbConnectionString": {
+              "type": "string"
+            },
+            "googleClientId": {
+              "type": "string"
+            },
+            "googleClientSecret": {
+              "type": "securestring"
+            },
+            "sessionSecret": {
+              "type": "securestring"
+            },
+            "jwtSecret": {
+              "type": "securestring"
+            }
+          },
+          "variables": {
+            "envName": "[format('{0}-env', parameters('appName'))]",
+            "apiAppName": "[format('{0}-api', parameters('appName'))]",
+            "workerAppName": "[format('{0}-worker', parameters('appName'))]",
+            "placeholderImage": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest",
+            "commonEnv": [
+              {
+                "name": "NODE_ENV",
+                "value": "production"
+              },
+              {
+                "name": "DATABASE_URL",
+                "value": "[parameters('dbConnectionString')]"
+              },
+              {
+                "name": "AZURE_STORAGE_ACCOUNT_NAME",
+                "value": "[parameters('storageAccountName')]"
+              },
+              {
+                "name": "AZURE_STORAGE_CONTAINER_NAME",
+                "value": "[parameters('storageContainerName')]"
+              },
+              {
+                "name": "AZURE_CLIENT_ID",
+                "value": "[parameters('identityClientId')]"
+              },
+              {
+                "name": "SESSION_SECRET",
+                "secretRef": "session-secret"
+              },
+              {
+                "name": "JWT_SECRET",
+                "secretRef": "jwt-secret"
+              },
+              {
+                "name": "GOOGLE_CLIENT_ID",
+                "value": "[parameters('googleClientId')]"
+              },
+              {
+                "name": "GOOGLE_CLIENT_SECRET",
+                "secretRef": "google-client-secret"
+              }
+            ],
+            "commonSecrets": [
+              {
+                "name": "registry-password",
+                "value": "[parameters('registryPassword')]"
+              },
+              {
+                "name": "session-secret",
+                "value": "[parameters('sessionSecret')]"
+              },
+              {
+                "name": "jwt-secret",
+                "value": "[parameters('jwtSecret')]"
+              },
+              {
+                "name": "google-client-secret",
+                "value": "[parameters('googleClientSecret')]"
+              }
+            ]
+          },
+          "resources": [
+            {
+              "type": "Microsoft.App/managedEnvironments",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('envName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "zoneRedundant": false
+              }
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('apiAppName')]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', parameters('identityId'))]": {}
+                }
+              },
+              "properties": {
+                "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]",
+                "configuration": {
+                  "ingress": {
+                    "external": true,
+                    "targetPort": 3000,
+                    "transport": "http",
+                    "corsPolicy": {
+                      "allowedOrigins": [
+                        "*"
+                      ],
+                      "allowedMethods": [
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "DELETE",
+                        "OPTIONS",
+                        "PATCH"
+                      ],
+                      "allowedHeaders": [
+                        "*"
+                      ],
+                      "allowCredentials": true
+                    }
+                  },
+                  "registries": [
+                    {
+                      "server": "[parameters('registryLoginServer')]",
+                      "username": "[parameters('registryUsername')]",
+                      "passwordSecretRef": "registry-password"
+                    }
+                  ],
+                  "secrets": "[variables('commonSecrets')]"
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "api",
+                      "image": "[variables('placeholderImage')]",
+                      "env": "[variables('commonEnv')]",
+                      "resources": {
+                        "cpu": "[json('0.5')]",
+                        "memory": "1Gi"
+                      }
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 0,
+                    "maxReplicas": 3,
+                    "rules": [
+                      {
+                        "name": "http-scaling",
+                        "http": {
+                          "metadata": {
+                            "concurrentRequests": "20"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2024-03-01",
+              "name": "[variables('workerAppName')]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', parameters('identityId'))]": {}
+                }
+              },
+              "properties": {
+                "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]",
+                "configuration": {
+                  "ingress": null,
+                  "registries": [
+                    {
+                      "server": "[parameters('registryLoginServer')]",
+                      "username": "[parameters('registryUsername')]",
+                      "passwordSecretRef": "registry-password"
+                    }
+                  ],
+                  "secrets": "[variables('commonSecrets')]"
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "worker",
+                      "image": "[variables('placeholderImage')]",
+                      "env": "[union(variables('commonEnv'), createArray(createObject('name', 'WORKER_MODE', 'value', 'true')))]",
+                      "resources": {
+                        "cpu": "[json('1.0')]",
+                        "memory": "2Gi"
+                      }
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 1,
+                    "maxReplicas": 1
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', variables('envName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "apiUrl": {
+              "type": "string",
+              "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('apiAppName')), '2024-03-01').configuration.ingress.fqdn)]"
+            },
+            "apiAppName": {
+              "type": "string",
+              "value": "[variables('apiAppName')]"
+            },
+            "workerAppName": {
+              "type": "string",
+              "value": "[variables('workerAppName')]"
+            },
+            "environmentName": {
+              "type": "string",
+              "value": "[variables('envName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "database",
+        "identity",
+        "registry",
+        "rg",
+        "storage"
+      ]
+    }
+  },
+  "outputs": {
+    "appUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "URL of the deployed APhoto web app."
+      },
+      "value": "[format('https://{0}', reference('staticWebApp').outputs.defaultHostname.value)]"
+    },
+    "apiUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "API URL — set this as VITE_API_URL when building the frontend."
+      },
+      "value": "[reference('containerApps').outputs.apiUrl.value]"
+    },
+    "resourceGroupName": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource group name."
+      },
+      "value": "[format('{0}-rg', parameters('appName'))]"
+    },
+    "registryLoginServer": {
+      "type": "string",
+      "metadata": {
+        "description": "Container Registry login server."
+      },
+      "value": "[reference('registry').outputs.loginServer.value]"
+    },
+    "apiAppName": {
+      "type": "string",
+      "metadata": {
+        "description": "API Container App name (for CI updates)."
+      },
+      "value": "[reference('containerApps').outputs.apiAppName.value]"
+    },
+    "workerAppName": {
+      "type": "string",
+      "metadata": {
+        "description": "Worker Container App name (for CI updates)."
+      },
+      "value": "[reference('containerApps').outputs.workerAppName.value]"
+    },
+    "swaDeploymentToken": {
+      "type": "string",
+      "metadata": {
+        "description": "Static Web App deployment token — use in GitHub Actions."
+      },
+      "value": "[reference('staticWebApp').outputs.deploymentToken.value]"
+    }
+  }
+}
