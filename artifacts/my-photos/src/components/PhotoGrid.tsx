@@ -533,39 +533,25 @@ const MonthGroup = memo(function MonthGroup({ month, monthPhotos, photoIndexMap,
         </div>
       </div>
 
-      {/* Justified row layout — photos fill the width at their natural aspect ratio */}
-      <div className="flex flex-wrap" style={{ gap: '3px' }}>
+      {/* Square grid — fast fixed-size cells */}
+      <div className="grid gap-0.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
         {visiblePhotos.map((photo: any) => {
-          const ar = (photo.width && photo.height) ? photo.width / photo.height : 1;
           const globalIdx = photoIndexMap.get(photo.id) ?? -1;
           return (
-            <div
+            <PhotoThumbnail
               key={photo.id}
-              style={{
-                height: '200px',
-                flexGrow: ar,
-                flexBasis: `${ar * 200}px`,
-                maxWidth: '100%',
-                minWidth: '60px',
-              }}
-              className="relative overflow-hidden"
-            >
-              <PhotoThumbnail
-                photo={photo}
-                globalIndex={globalIdx}
-                onOpenLightbox={onOpenLightbox}
-                onRemoveFromAlbum={onRemoveFromAlbum}
-                onTrash={onTrash}
-                onHide={onHide}
-                selected={selectedIds.has(photo.id)}
-                selecting={selecting}
-                onToggleSelect={onToggleSelect}
-              />
-            </div>
+              photo={photo}
+              globalIndex={globalIdx}
+              onOpenLightbox={onOpenLightbox}
+              onRemoveFromAlbum={onRemoveFromAlbum}
+              onTrash={onTrash}
+              onHide={onHide}
+              selected={selectedIds.has(photo.id)}
+              selecting={selecting}
+              onToggleSelect={onToggleSelect}
+            />
           );
         })}
-        {/* Phantom spacer so last partial row doesn't over-stretch */}
-        <div style={{ flexGrow: 999, flexBasis: '200px', maxHeight: '200px' }} />
       </div>
 
       {hasMore && (
@@ -726,7 +712,7 @@ const PhotoThumbnail = memo(function PhotoThumbnail({ photo, globalIndex, onOpen
       }}
       data-testid={`photo-${photo.id}`}
       data-photo-id={photo.id}
-      className="photo-thumb relative w-full h-full bg-muted overflow-hidden rounded-sm group focus:outline-none focus:ring-2 focus:ring-primary transition-[transform,box-shadow] duration-200 hover:brightness-90 hover:z-10"
+      className="photo-thumb relative aspect-square bg-muted overflow-hidden rounded-lg group focus:outline-none focus:ring-2 focus:ring-primary transition-[transform,box-shadow] duration-200 hover:scale-[1.03] hover:shadow-lg hover:z-10"
       style={{ contain: "layout style paint" }}
       onMouseEnter={() => isVideo && setVideoHovered(true)}
       onMouseLeave={() => isVideo && setVideoHovered(false)}
