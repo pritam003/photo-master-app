@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { Readable } from "stream";
 import { db, photosTable, albumsTable, albumPhotosTable } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
-import { uploadBlobFromStream } from "../lib/azure-storage.js";
+import { uploadBlob, uploadBlobFromStream } from "../lib/azure-storage.js";
 import { logger } from "../lib/logger.js";
 import { refreshGoogleAccessToken } from "../lib/google-auth.js";
 
@@ -220,6 +220,9 @@ async function runImport(importId: string, sessionId: string, userId: string, ac
 
 const refreshAccessToken = refreshGoogleAccessToken;
 
+/** Number of photos to upload to Azure in parallel from Google */
+const IMPORT_CONCURRENCY = 5;
+
 /** Process a list of items, skipping already-processed IDs. Shared by initial run and resume. */
 async function processItems(
   importId: string,
@@ -231,20 +234,26 @@ async function processItems(
   userId: string,
   albumId: string | undefined,
 ) {
-  // Mutable token holder so fetchWithRetry can update it on refresh
+  // Shared mutable token — all parallel workers read/write through this object
   const tokenHolder = { accessToken: initialAccessToken };
 
-  for (const item of items) {
-    const itemId: string = item.id || item.mediaFile?.filename || "";
-    if (processedIds.has(itemId)) continue; // already done (resume skip)
+  // Token refresh mutex: at most one in-flight refresh at a time
+  let refreshInFlight: Promise<void> | null = null;
+  async function ensureFreshToken(): Promise<void> {
+    if (!refreshToken) return;
+    if (refreshInFlight) { await refreshInFlight; return; }
+    refreshInFlight = (async () => {
+      const newToken = await refreshAccessToken(refreshToken).catch(() => null);
+      if (newToken) tokenHolder.accessToken = newToken;
+    })().finally(() => { refreshInFlight = null; });
+    await refreshInFlight;
+  }
 
-    if (cancelledImports.has(importId)) {
-      cancelledImports.delete(importId);
-      status.status = "error";
-      status.message = "Cancelled by user";
-      status.resumable = resumeDataStore.has(importId);
-      return;
-    }
+  // Per-item processor — called concurrently by multiple workers
+  async function processOne(item: any): Promise<void> {
+    const itemId: string = item.id || item.mediaFile?.filename || "";
+    if (processedIds.has(itemId)) return;
+
     try {
       const mimeType: string = item.mediaFile?.mimeType || "image/jpeg";
       const isVideo = mimeType.startsWith("video/");
@@ -252,13 +261,14 @@ async function processItems(
       const baseUrl: string = item.mediaFile?.baseUrl || "";
       const downloadUrl = isVideo ? `${baseUrl}=dv` : `${baseUrl}=d`;
 
-      // Stream directly from Google to Azure — no full-file buffer in RAM.
-      // Retry up to 3 times on transient errors (401 token refresh, 429, 5xx, timeouts).
       const MAX_RETRIES = 3;
       let size = 0;
+      const blobName_ = `${userId}/${albumId ?? "library"}/${randomUUID()}${ext}`;
+
+      // ── Stream full-resolution photo from Google → Azure Blob ──────────────
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         const controller = new AbortController();
-        const timeoutHandle = setTimeout(() => controller.abort(), 120_000); // 2 min per file
+        const timeoutHandle = setTimeout(() => controller.abort(), 120_000);
         try {
           const res = await fetch(downloadUrl, {
             headers: { Authorization: `Bearer ${tokenHolder.accessToken}` },
@@ -267,8 +277,7 @@ async function processItems(
           clearTimeout(timeoutHandle);
 
           if (res.status === 401 && refreshToken && attempt < MAX_RETRIES) {
-            const newToken = await refreshAccessToken(refreshToken);
-            if (newToken) tokenHolder.accessToken = newToken;
+            await ensureFreshToken();
             continue;
           }
           if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
@@ -278,13 +287,7 @@ async function processItems(
           if (!res.ok) throw new Error(`Download failed: ${res.status}`);
 
           size = parseInt(res.headers.get("content-length") ?? "0", 10);
-
-          const blobName_ = `${userId}/${albumId ?? "library"}/${randomUUID()}${ext}`;
-          // Pipe the web ReadableStream → Node Readable → Azure Blob (4 MB blocks, 4 parallel)
           await uploadBlobFromStream(blobName_, Readable.fromWeb(res.body as any), mimeType);
-
-          // Keep blobName visible after the loop
-          (item as any).__blobName = blobName_;
           break;
         } catch (err: any) {
           clearTimeout(timeoutHandle);
@@ -302,24 +305,67 @@ async function processItems(
         }
       }
 
-      // Keep resume store's accessToken in sync in case it was refreshed
+      // Keep resume store's accessToken in sync after potential refresh
       const resume = resumeDataStore.get(importId);
       if (resume) resume.accessToken = tokenHolder.accessToken;
 
-      const blobName = (item as any).__blobName as string;
+      // ── Inline thumbnail generation using Google's CDN resize API ──────────
+      // Fetch pre-resized versions from Google (w600-h600-c and w1920) instead of
+      // downloading the full blob and resizing server-side. Much faster: ~100 KB vs 5–10 MB.
+      let thumbBlobName: string | undefined;
+      let previewBlobName: string | undefined;
+
+      if (!isVideo && baseUrl) {
+        try {
+          const dirPart = blobName_.substring(0, blobName_.lastIndexOf("/"));
+          const basePart = blobName_.substring(blobName_.lastIndexOf("/") + 1, blobName_.lastIndexOf("."));
+          const candidateThumb = `${dirPart}/thumb_${basePart}.jpg`;
+          const candidatePreview = `${dirPart}/preview_${basePart}.jpg`;
+
+          const [thumbRes, previewRes] = await Promise.all([
+            fetch(`${baseUrl}=w600-h600-c`, {
+              headers: { Authorization: `Bearer ${tokenHolder.accessToken}` },
+              signal: AbortSignal.timeout(30_000),
+            }),
+            fetch(`${baseUrl}=w1920`, {
+              headers: { Authorization: `Bearer ${tokenHolder.accessToken}` },
+              signal: AbortSignal.timeout(30_000),
+            }),
+          ]);
+
+          if (thumbRes.ok && previewRes.ok) {
+            const [thumbBuf, previewBuf] = await Promise.all([
+              thumbRes.arrayBuffer().then(b => Buffer.from(b)),
+              previewRes.arrayBuffer().then(b => Buffer.from(b)),
+            ]);
+            await Promise.all([
+              uploadBlob(candidateThumb, thumbBuf, "image/jpeg"),
+              uploadBlob(candidatePreview, previewBuf, "image/jpeg"),
+            ]);
+            thumbBlobName = candidateThumb;
+            previewBlobName = candidatePreview;
+            logger.debug({ itemId }, "Inline thumbnails generated from Google CDN");
+          }
+        } catch (thumbErr) {
+          logger.warn({ itemId, err: String(thumbErr) }, "Inline thumbnail fetch failed, worker will backfill");
+        }
+      }
+
       const meta = item.mediaFile?.mediaFileMetadata;
       const [photo] = await db
         .insert(photosTable)
         .values({
           userId,
           filename: item.mediaFile?.filename || `photo${ext}`,
-          blobName,
+          blobName: blobName_,
           contentType: mimeType,
           size,
           width: meta?.width ? Number(meta.width) : null,
           height: meta?.height ? Number(meta.height) : null,
           takenAt: item.createTime ? new Date(item.createTime) : null,
           googleMediaItemId: item.id || null,
+          ...(thumbBlobName ? { thumbBlobName } : {}),
+          ...(previewBlobName ? { previewBlobName } : {}),
         })
         .onConflictDoNothing()
         .returning();
@@ -333,13 +379,9 @@ async function processItems(
 
       processedIds.add(itemId);
       status.imported++;
-
-      // Small delay to stay within Google's per-minute quota (avoid 429)
-      await new Promise(r => setTimeout(r, 150));
     } catch (err: any) {
       logger.error({ err: String(err), itemId }, "Failed to import photo");
       status.errors++;
-      // Bubble up storage/DB errors so outer catch marks as resumable
       if (
         String(err).includes("ECONNREFUSED") ||
         String(err).includes("ETIMEDOUT") ||
@@ -350,6 +392,36 @@ async function processItems(
       }
     }
   }
+
+  // ── Concurrent worker pool ──────────────────────────────────────────────────
+  // IMPORT_CONCURRENCY workers drain from a shared queue so all slots stay busy.
+  let cancelled = false;
+  const queue = items.filter(item => {
+    const id = item.id || item.mediaFile?.filename || "";
+    return id && !processedIds.has(id);
+  });
+
+  const workers = Array.from(
+    { length: Math.min(IMPORT_CONCURRENCY, queue.length || 1) },
+    async () => {
+      while (true) {
+        if (!cancelled && cancelledImports.has(importId)) {
+          cancelledImports.delete(importId);
+          status.status = "error";
+          status.message = "Cancelled by user";
+          status.resumable = resumeDataStore.has(importId);
+          cancelled = true;
+        }
+        if (cancelled) break;
+
+        const item = queue.shift();
+        if (!item) break;
+        await processOne(item);
+      }
+    },
+  );
+
+  await Promise.all(workers);
 }
 
 // POST /api/google/auth-url — return Google OAuth URL

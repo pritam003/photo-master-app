@@ -62,7 +62,7 @@ function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 // Covers Google-imported photos (streamed upload skips sync thumbnail generation)
 // and any photos uploaded before thumbnail generation was added.
 
-const IMAGE_THUMB_BATCH = 5;
+const IMAGE_THUMB_BATCH = 20; // larger batch, processed in parallel
 
 async function runImageThumbnailPass(): Promise<void> {
   const rows = await db.execute(sql`
@@ -78,25 +78,28 @@ async function runImageThumbnailPass(): Promise<void> {
   if (rows.rows.length === 0) return;
   logger.info({ count: rows.rows.length }, "[worker] image-thumb: processing batch");
 
-  for (const row of rows.rows as Array<{ id: string; blob_name: string; content_type: string }>) {
-    try {
-      const buf = await downloadBlob(row.blob_name);
-      const thumbs = await generateThumbnails(buf, row.blob_name, row.content_type);
-      if (thumbs) {
-        await db.execute(sql`
-          UPDATE photos SET thumb_blob_name = ${thumbs.thumbBlobName}, preview_blob_name = ${thumbs.previewBlobName}
-          WHERE id = ${row.id}
-        `);
-        logger.info({ id: row.id }, "[worker] image-thumb: generated");
-      } else {
-        // Mark with sentinel so we don't retry endlessly
-        await db.execute(sql`UPDATE photos SET thumb_blob_name = '' WHERE id = ${row.id}`);
-        logger.warn({ id: row.id }, "[worker] image-thumb: sharp returned null, skipping");
+  // Process all items in the batch concurrently
+  await Promise.all(
+    (rows.rows as Array<{ id: string; blob_name: string; content_type: string }>).map(async (row) => {
+      try {
+        const buf = await downloadBlob(row.blob_name);
+        const thumbs = await generateThumbnails(buf, row.blob_name, row.content_type);
+        if (thumbs) {
+          await db.execute(sql`
+            UPDATE photos SET thumb_blob_name = ${thumbs.thumbBlobName}, preview_blob_name = ${thumbs.previewBlobName}
+            WHERE id = ${row.id}
+          `);
+          logger.info({ id: row.id }, "[worker] image-thumb: generated");
+        } else {
+          // Mark with sentinel so we don't retry endlessly
+          await db.execute(sql`UPDATE photos SET thumb_blob_name = '' WHERE id = ${row.id}`);
+          logger.warn({ id: row.id }, "[worker] image-thumb: sharp returned null, skipping");
+        }
+      } catch (err) {
+        logger.warn({ id: row.id, err }, "[worker] image-thumb: failed, will retry");
       }
-    } catch (err) {
-      logger.warn({ id: row.id, err }, "[worker] image-thumb: failed, will retry");
-    }
-  }
+    }),
+  );
 }
 
 // ── Video thumbnail backfill pass ─────────────────────────────────────────────
