@@ -8,11 +8,15 @@ A Google Photos-inspired, self-hosted photo library. Upload, organize, search, a
 
 | Login | Library | Albums |
 |---|---|---|
-| ![Login](docs/screenshots/login-page.png) | ![Library](docs/screenshots/library.png) | ![Albums](docs/screenshots/albums.png) |
+| ![Login](docs/screenshots/login.png) | ![Library](docs/screenshots/library.png) | ![Albums](docs/screenshots/albums.png) |
 
-| Upload | Multi-select | Trash |
+| Upload | People | Trash |
 |---|---|---|
-| ![Upload](docs/screenshots/06-upload.png) | ![Multi-select](docs/screenshots/multiselect.png) | ![Trash](docs/screenshots/trash.png) |
+| ![Upload](docs/screenshots/upload-modal.png) | ![People](docs/screenshots/people.png) | ![Trash](docs/screenshots/trash.png) |
+
+| Archive | Mobile |
+|---|---|
+| ![Archive](docs/screenshots/archive.png) | ![Mobile](docs/screenshots/library-mobile.png) |
 
 ---
 
