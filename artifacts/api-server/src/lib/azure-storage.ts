@@ -106,13 +106,59 @@ export async function downloadBlob(blobName: string): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-// Returns a direct public blob URL (container has publicAccess=blob, no SAS needed).
-// In dev, returns an authenticated proxy path instead of the raw Azure URL.
-export function generateSasUrl(blobName: string): string {
+// Returns a read-only SAS URL for a blob (1-hour expiry).
+// Uses a module-level cached delegation key refreshed every 5.5 hours.
+// In dev, returns an authenticated proxy path instead.
+
+let _cachedReadKey: UserDelegationKey | null = null;
+let _readKeyExpiry: Date | null = null;
+
+/** Pre-warm (or refresh) the delegation key used for read SAS generation.
+ *  Called at startup and periodically so generateSasUrl() stays synchronous. */
+export async function warmReadSasKey(): Promise<void> {
+  const now = new Date();
+  if (_cachedReadKey && _readKeyExpiry && _readKeyExpiry.getTime() - now.getTime() > 30 * 60 * 1000) {
+    return; // still valid for >30 min
+  }
+  try {
+    const keyStart = new Date(now);
+    keyStart.setMinutes(0, 0, 0);
+    const keyExpiry = new Date(keyStart.getTime() + 6 * 60 * 60 * 1000); // 6 hours
+    _cachedReadKey = await getBlobServiceClient().getUserDelegationKey(keyStart, keyExpiry);
+    _readKeyExpiry = keyExpiry;
+  } catch (err) {
+    console.error("[azure-storage] failed to warm read SAS key:", err);
+  }
+}
+
+export function generateSasUrl(blobName: string, ttlSeconds = 3600): string {
   if (process.env.NODE_ENV !== "production") {
     return `/api/blobs/${blobName}`;
   }
 
+  // If delegation key is available, generate a proper read SAS
+  if (_cachedReadKey && _readKeyExpiry && _readKeyExpiry > new Date()) {
+    try {
+      const now = new Date();
+      const expiresOn = new Date(now.getTime() + ttlSeconds * 1000);
+      const sasParams = generateBlobSASQueryParameters(
+        {
+          containerName,
+          blobName,
+          permissions: BlobSASPermissions.parse("r"),
+          startsOn: now,
+          expiresOn,
+        },
+        _cachedReadKey,
+        accountName,
+      );
+      return `https://${accountName}.blob.core.windows.net/${containerName}/${blobName}?${sasParams.toString()}`;
+    } catch {
+      // fall through to plain URL
+    }
+  }
+
+  // Fallback: plain URL (works if container is public, otherwise broken — will fix on next warmup)
   return `https://${accountName}.blob.core.windows.net/${containerName}/${blobName}`;
 }
 

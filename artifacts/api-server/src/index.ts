@@ -3,6 +3,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { warmReadSasKey } from "./lib/azure-storage.js";
 
 const rawPort = process.env["PORT"];
 
@@ -46,4 +47,9 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // Pre-warm the delegation key so generateSasUrl() can sign read SAS URLs immediately.
+  // Refresh every 5.5 hours (key TTL is 6 hours).
+  warmReadSasKey().catch(() => {});
+  setInterval(() => warmReadSasKey().catch(() => {}), 5.5 * 60 * 60 * 1000);
 });
