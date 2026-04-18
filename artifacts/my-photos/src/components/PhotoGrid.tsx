@@ -2,6 +2,19 @@ import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { Heart, FolderPlus, Check, FolderMinus, Trash2, Download, X, EyeOff, Eye, Share2 } from "lucide-react";
 import { groupPhotosByDate } from "@/lib/api";
 import Lightbox from "./Lightbox";
+
+/** Convert a YYYY-MM-DD key to a Google Photos-style day label */
+function getDayLabel(isoDate: string): string {
+  const now = new Date();
+  const todayYMD = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const yest = new Date(now.getTime() - 86_400_000);
+  const yestYMD = `${yest.getFullYear()}-${String(yest.getMonth()+1).padStart(2,'0')}-${String(yest.getDate()).padStart(2,'0')}`;
+  if (isoDate === todayYMD) return "Today";
+  if (isoDate === yestYMD) return "Yesterday";
+  // Use noon to avoid DST/timezone issues when parsing YYYY-MM-DD
+  const d = new Date(isoDate + "T12:00:00");
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
 import { useListAlbums, useAddPhotoToAlbum, useCreateAlbum, useTrashPhoto, getListAlbumsQueryKey, getListAlbumPhotosQueryKey, getListPhotosQueryKey, getGetPhotoStatsQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { API_BASE } from "@/lib/api";
@@ -471,34 +484,90 @@ const MonthGroup = memo(function MonthGroup({ month, monthPhotos, photoIndexMap,
   const hasMore = monthPhotos.length > visibleCount;
   const visiblePhotos = monthPhotos.slice(0, visibleCount);
 
+  // Derive location from photos (use most common non-null locationName in the day)
+  const locationName = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const p of monthPhotos) {
+      if (p.locationName) counts[p.locationName] = (counts[p.locationName] ?? 0) + 1;
+    }
+    const entries = Object.entries(counts);
+    if (entries.length === 0) return null;
+    return entries.sort((a, b) => b[1] - a[1])[0][0];
+  }, [monthPhotos]);
+
+  const dayLabel = getDayLabel(month);
+
+  // For select-all on the day group
+  const allSelected = visiblePhotos.every(p => selectedIds.has(p.id));
+  const handleDaySelect = () => {
+    if (allSelected) {
+      visiblePhotos.forEach(p => { if (selectedIds.has(p.id)) onToggleSelect(p.id); });
+    } else {
+      visiblePhotos.forEach(p => { if (!selectedIds.has(p.id)) onToggleSelect(p.id); });
+    }
+  };
+
   return (
-    <div className="mb-10" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 600px" }}>
-      <div className="flex items-center justify-between mb-4 px-1">
-        <div className="flex items-center gap-2.5">
-          <span className="w-1 h-5 rounded-full bg-primary inline-block" />
-          <h2 className="text-base font-bold text-foreground tracking-tight">{month}</h2>
-          <span className="text-xs text-muted-foreground font-normal">({monthPhotos.length})</span>
+    <div className="mb-8" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 600px" }}>
+      {/* Google Photos-style day header */}
+      <div className="flex items-center gap-2 mb-2 px-0.5 group/header">
+        {/* Select-all circle — visible on hover or when selecting */}
+        <button
+          onClick={handleDaySelect}
+          className={`shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
+            selecting ? "opacity-100" : "opacity-0 group-hover/header:opacity-100"
+          } ${
+            allSelected && selecting
+              ? "bg-primary border-primary text-primary-foreground"
+              : "border-muted-foreground/50 hover:border-primary"
+          }`}
+          title="Select all for this day"
+        >
+          {allSelected && selecting && <Check className="w-3 h-3" />}
+        </button>
+        <div>
+          <h2 className="text-sm font-semibold text-foreground leading-tight">{dayLabel}</h2>
+          {locationName && (
+            <p className="text-xs text-muted-foreground leading-tight truncate max-w-xs">{locationName}</p>
+          )}
         </div>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 gap-2">
+
+      {/* Justified row layout — photos fill the width at their natural aspect ratio */}
+      <div className="flex flex-wrap" style={{ gap: '3px' }}>
         {visiblePhotos.map((photo: any) => {
+          const ar = (photo.width && photo.height) ? photo.width / photo.height : 1;
           const globalIdx = photoIndexMap.get(photo.id) ?? -1;
           return (
-            <PhotoThumbnail
+            <div
               key={photo.id}
-              photo={photo}
-              globalIndex={globalIdx}
-              onOpenLightbox={onOpenLightbox}
-              onRemoveFromAlbum={onRemoveFromAlbum}
-              onTrash={onTrash}
-              onHide={onHide}
-              selected={selectedIds.has(photo.id)}
-              selecting={selecting}
-              onToggleSelect={onToggleSelect}
-            />
+              style={{
+                height: '200px',
+                flexGrow: ar,
+                flexBasis: `${ar * 200}px`,
+                maxWidth: '100%',
+                minWidth: '60px',
+              }}
+              className="relative overflow-hidden"
+            >
+              <PhotoThumbnail
+                photo={photo}
+                globalIndex={globalIdx}
+                onOpenLightbox={onOpenLightbox}
+                onRemoveFromAlbum={onRemoveFromAlbum}
+                onTrash={onTrash}
+                onHide={onHide}
+                selected={selectedIds.has(photo.id)}
+                selecting={selecting}
+                onToggleSelect={onToggleSelect}
+              />
+            </div>
           );
         })}
+        {/* Phantom spacer so last partial row doesn't over-stretch */}
+        <div style={{ flexGrow: 999, flexBasis: '200px', maxHeight: '200px' }} />
       </div>
+
       {hasMore && (
         <div className="flex justify-center mt-4">
           <button
@@ -657,7 +726,7 @@ const PhotoThumbnail = memo(function PhotoThumbnail({ photo, globalIndex, onOpen
       }}
       data-testid={`photo-${photo.id}`}
       data-photo-id={photo.id}
-      className="photo-thumb relative aspect-square bg-muted overflow-hidden rounded-lg group focus:outline-none focus:ring-2 focus:ring-primary transition-[transform,box-shadow] duration-200 hover:scale-[1.03] hover:shadow-lg hover:z-10"
+      className="photo-thumb relative w-full h-full bg-muted overflow-hidden rounded-sm group focus:outline-none focus:ring-2 focus:ring-primary transition-[transform,box-shadow] duration-200 hover:brightness-90 hover:z-10"
       style={{ contain: "layout style paint" }}
       onMouseEnter={() => isVideo && setVideoHovered(true)}
       onMouseLeave={() => isVideo && setVideoHovered(false)}

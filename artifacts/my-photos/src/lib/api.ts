@@ -19,24 +19,24 @@ export function formatDate(dateStr: string | null | undefined): string {
 }
 
 export function groupPhotosByDate(photos: any[], dateField: "taken" | "uploaded" = "taken"): Record<string, any[]> {
+  // Group by calendar day — key is "YYYY-MM-DD" for deterministic ordering
   const groups: Record<string, any[]> = {};
   for (const photo of photos) {
-    const date = dateField === "uploaded"
-      ? new Date(photo.uploadedAt)
-      : new Date(photo.takenAt ?? photo.uploadedAt);
-    const key = date.toLocaleDateString("en-US", { year: "numeric", month: "long" });
+    const raw = dateField === "uploaded" ? photo.uploadedAt : (photo.takenAt ?? photo.uploadedAt);
+    const date = new Date(raw);
+    // Build YYYY-MM-DD in LOCAL time to avoid midnight cross-over artefacts
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    const key = `${y}-${m}-${d}`;
     if (!groups[key]) groups[key] = [];
     groups[key].push(photo);
   }
-  // Sort each month's photos newest-first using the same field
+  // Sort each day newest-first
   for (const key of Object.keys(groups)) {
     groups[key].sort((a, b) => {
-      const da = dateField === "uploaded"
-        ? new Date(a.uploadedAt).getTime()
-        : new Date(a.takenAt ?? a.uploadedAt).getTime();
-      const db = dateField === "uploaded"
-        ? new Date(b.uploadedAt).getTime()
-        : new Date(b.takenAt ?? b.uploadedAt).getTime();
+      const da = new Date(dateField === "uploaded" ? a.uploadedAt : (a.takenAt ?? a.uploadedAt)).getTime();
+      const db = new Date(dateField === "uploaded" ? b.uploadedAt : (b.takenAt ?? b.uploadedAt)).getTime();
       return db - da;
     });
   }
