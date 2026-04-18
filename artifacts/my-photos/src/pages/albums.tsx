@@ -5,7 +5,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import GoogleImportModal from "@/components/GoogleImportModal";
 import ShareAlbumModal from "@/components/ShareAlbumModal";
-import GoogleSyncSettings from "@/components/GoogleSyncSettings";
 
 export default function AlbumsPage() {
   const [showCreate, setShowCreate] = useState(false);
@@ -13,31 +12,16 @@ export default function AlbumsPage() {
   const [activeImportId, setActiveImportId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [shareTarget, setShareTarget] = useState<{ id: string; name: string } | null>(null);
-  const [syncBanner, setSyncBanner] = useState<{ type: "success" | "error"; msg: string } | null>(null);
-
   // Auto-open modal when arriving from Google OAuth callback
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const importId = params.get("import_id");
     const importError = params.get("import_error");
-    const syncConnected = params.get("sync_connected");
-    const syncError = params.get("sync_error");
     if (importId || importError) {
       setActiveImportId(importId);
       setShowImport(true);
     }
-    if (syncConnected) {
-      setSyncBanner({ type: "success", msg: "Google Photos connected! Auto-sync is now enabled." });
-      setTimeout(() => setSyncBanner(null), 5000);
-    }
-    if (syncError) {
-      const msg = syncError === "missing_library_scope"
-        ? "Google Photos Library access was not granted. Make sure 'photoslibrary.readonly' is added to your OAuth consent screen in Google Cloud Console, then try connecting again."
-        : `Google Photos connection failed: ${syncError.replace(/_/g, " ")}`;
-      setSyncBanner({ type: "error", msg });
-      setTimeout(() => setSyncBanner(null), 12000);
-    }
-    if (importId || importError || syncConnected || syncError) {
+    if (importId || importError) {
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
@@ -66,11 +50,6 @@ export default function AlbumsPage() {
 
   return (
     <div className="flex-1 flex flex-col h-full">
-      {syncBanner && (
-        <div className={`px-6 py-2 text-sm font-medium text-center ${syncBanner.type === "success" ? "bg-green-500/10 text-green-700 dark:text-green-400" : "bg-destructive/10 text-destructive"}`}>
-          {syncBanner.msg}
-        </div>
-      )}
       <div className="flex items-center gap-3 px-6 py-4 border-b border-border bg-background sticky top-0 z-10">
         <h1 className="text-lg font-semibold text-foreground">Albums</h1>
         <div className="flex-1" />
@@ -155,11 +134,7 @@ export default function AlbumsPage() {
           </div>
         )}
 
-        {/* Google Auto-Sync settings card */}
-        <div className="mt-8">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">Google Auto-Sync</h2>
-          <GoogleSyncSettings albums={albums?.map((a: any) => ({ id: a.id, name: a.name })) ?? []} />
-        </div>
+
       </div>
 
       {showCreate && (
