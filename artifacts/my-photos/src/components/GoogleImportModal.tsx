@@ -193,7 +193,27 @@ export default function GoogleImportModal({ onClose, activeImportId, targetAlbum
     return null;
   }
 
-  // Only show a small error state if something went wrong before import started
+  // Waiting for the OAuth tab to come back (pendingState set, but no importId yet)
+  if (pendingState && !importId) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+        <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3">
+          <div className="flex items-center gap-3">
+            <Loader2 className="w-5 h-5 text-primary animate-spin shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">Waiting for Google sign-in…</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Complete sign-in in the tab that just opened, then select your photos.</p>
+            </div>
+            <button onClick={onClose} className="p-1 rounded hover:bg-muted text-muted-foreground shrink-0">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Only show error state if something went wrong before import started
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 backdrop-blur-sm p-4">
       <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3">

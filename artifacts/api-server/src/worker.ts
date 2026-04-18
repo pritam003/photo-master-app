@@ -19,7 +19,7 @@ import { db, photosTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
 import { downloadBlob } from "./lib/azure-storage.js";
 import { analyzePhoto } from "./lib/azure-vision.js";
-import { generateVideoThumbnails } from "./lib/thumbnails.js";
+import { generateVideoThumbnails, generateThumbnails } from "./lib/thumbnails.js";
 import { runFaceRecognitionJob } from "./lib/face-recognition.js";
 import { logger } from "./lib/logger.js";
 import exifr from "exifr";
@@ -57,6 +57,47 @@ async function reverseGeocode(lat: number, lon: number): Promise<string> {
 }
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── Image thumbnail backfill pass ─────────────────────────────────────────────
+// Covers Google-imported photos (streamed upload skips sync thumbnail generation)
+// and any photos uploaded before thumbnail generation was added.
+
+const IMAGE_THUMB_BATCH = 5;
+
+async function runImageThumbnailPass(): Promise<void> {
+  const rows = await db.execute(sql`
+    SELECT id, blob_name, content_type
+    FROM photos
+    WHERE (thumb_blob_name IS NULL OR thumb_blob_name = '')
+      AND content_type LIKE 'image/%'
+      AND trashed = false
+    ORDER BY uploaded_at DESC
+    LIMIT ${IMAGE_THUMB_BATCH}
+  `);
+
+  if (rows.rows.length === 0) return;
+  logger.info({ count: rows.rows.length }, "[worker] image-thumb: processing batch");
+
+  for (const row of rows.rows as Array<{ id: string; blob_name: string; content_type: string }>) {
+    try {
+      const buf = await downloadBlob(row.blob_name);
+      const thumbs = await generateThumbnails(buf, row.blob_name, row.content_type);
+      if (thumbs) {
+        await db.execute(sql`
+          UPDATE photos SET thumb_blob_name = ${thumbs.thumbBlobName}, preview_blob_name = ${thumbs.previewBlobName}
+          WHERE id = ${row.id}
+        `);
+        logger.info({ id: row.id }, "[worker] image-thumb: generated");
+      } else {
+        // Mark with sentinel so we don't retry endlessly
+        await db.execute(sql`UPDATE photos SET thumb_blob_name = '' WHERE id = ${row.id}`);
+        logger.warn({ id: row.id }, "[worker] image-thumb: sharp returned null, skipping");
+      }
+    } catch (err) {
+      logger.warn({ id: row.id, err }, "[worker] image-thumb: failed, will retry");
+    }
+  }
+}
 
 // ── Video thumbnail backfill pass ─────────────────────────────────────────────
 
@@ -260,6 +301,7 @@ if (process.env.FACE_ONLY_MODE === "true") {
       try {
         await runVisionPass();
         await runGpsPass();
+        await runImageThumbnailPass();
         await runVideoThumbnailPass();
       } catch (err) {
         logger.warn({ err }, "[worker] poll error");
