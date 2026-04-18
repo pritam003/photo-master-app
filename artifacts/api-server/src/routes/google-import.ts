@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { randomUUID } from "crypto";
+import { randomUUID, createHmac } from "crypto";
 import { Readable } from "stream";
 import { db, photosTable, albumsTable, albumPhotosTable, googleSyncTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
@@ -526,8 +526,30 @@ router.post("/google/import/:id/resume", requireAuth, async (req: any, res) => {
 
 // ── Auto-sync settings endpoints ──────────────────────────────────────────────
 
-// Map of pending OAuth states for the dedicated sync connect flow
-const syncPendingStates = new Map<string, { userId: string; redirectUri: string }>();
+/** Encode userId + redirectUri into a tamper-proof state string (no in-memory map needed). */
+function encodeSyncState(userId: string, redirectUri: string): string {
+  const secret = process.env.TOKEN_ENCRYPTION_KEY || GOOGLE_CLIENT_SECRET || "fallback";
+  const payload = Buffer.from(JSON.stringify({ userId, redirectUri, ts: Date.now() })).toString("base64url");
+  const sig = createHmac("sha256", secret).update(payload).digest("base64url");
+  return `${payload}.${sig}`;
+}
+
+/** Decode and verify the state string. Returns null if invalid/tampered. */
+function decodeSyncState(state: string): { userId: string; redirectUri: string; ts: number } | null {
+  try {
+    const secret = process.env.TOKEN_ENCRYPTION_KEY || GOOGLE_CLIENT_SECRET || "fallback";
+    const [payload, sig] = state.split(".");
+    if (!payload || !sig) return null;
+    const expected = createHmac("sha256", secret).update(payload).digest("base64url");
+    if (sig !== expected) return null;
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString());
+    // Reject states older than 15 minutes
+    if (Date.now() - data.ts > 15 * 60 * 1000) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
 
 // POST /api/google/sync/connect — start dedicated sync-only OAuth (photoslibrary.readonly)
 router.post("/google/sync/connect", requireAuth, async (req: any, res) => {
@@ -535,9 +557,7 @@ router.post("/google/sync/connect", requireAuth, async (req: any, res) => {
     return res.status(503).json({ error: "Google not configured." });
   }
   const redirectUri = `${apiOrigin(req)}/api/google/sync/oauth-callback`;
-  const state = randomUUID();
-  syncPendingStates.set(state, { userId: req.currentUser.id, redirectUri });
-  setTimeout(() => syncPendingStates.delete(state), 10 * 60 * 1000);
+  const state = encodeSyncState(req.currentUser.id, redirectUri);
 
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
@@ -559,11 +579,10 @@ router.get("/google/sync/oauth-callback", async (req, res) => {
   if (error || !code || !state) {
     return res.redirect(`${frontendUrl}/albums?sync_error=${encodeURIComponent(error ?? "cancelled")}`);
   }
-  const pending = syncPendingStates.get(state);
+  const pending = decodeSyncState(state);
   if (!pending) {
     return res.redirect(`${frontendUrl}/albums?sync_error=expired`);
   }
-  syncPendingStates.delete(state);
 
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
