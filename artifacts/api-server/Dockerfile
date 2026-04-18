@@ -28,23 +28,34 @@ COPY lib ./lib
 # Build the app (outputs to artifacts/api-server/dist)
 RUN node artifacts/api-server/build.mjs
 
-# Use pnpm deploy to create a self-contained folder with all resolved node_modules
-RUN pnpm --filter @workspace/api-server deploy --prod --legacy /app/deploy
+# Use pnpm deploy to create a self-contained folder with all resolved node_modules.
+# --ignore-scripts prevents tfjs-node's install.js from running again (it would try
+# to re-download libtensorflow from CDN, which is unreliable in CI).
+RUN pnpm --filter @workspace/api-server deploy --prod --legacy --ignore-scripts /app/deploy
 
 # Rebuild native modules in the deploy layout.
 # canvas: needs to relink against system cairo/pango headers in this stage.
-# @tensorflow/tfjs-node: restore pre-built libtensorflow deps from the builder workspace
-#   to avoid re-downloading from CDN (unreliable in CI). The builder already ran
-#   pnpm rebuild which downloaded and compiled everything; we copy deps/ back so
-#   install.js can skip the download and only recompile the Node.js binding.
+# @tensorflow/tfjs-node: the builder stage already compiled both libtensorflow and the
+#   tfjs_binding.node. We explicitly copy deps/ into the deploy layout (since
+#   --ignore-scripts means install.js did not run), then rebuild only canvas.
 WORKDIR /app/deploy
-RUN find node_modules -path "*tfjs-node/deps" -maxdepth 8 -type d -exec rm -rf {} + 2>/dev/null || true
+# Copy pre-built libtensorflow deps from the builder workspace into the deploy layout.
 RUN bash -c '\
-  SRC=$(find /app/node_modules -path "*/tfjs-node/deps" -maxdepth 10 -type d 2>/dev/null | head -1); \
-  [ -z "$SRC" ] && exit 0; \
-  find . -path "*/tfjs-node" -maxdepth 10 -type d 2>/dev/null | grep -E "tfjs-node$" | \
-    while read dst; do cp -r "$SRC" "$dst/deps"; done' || true
-RUN npm rebuild canvas @tensorflow/tfjs-node 2>&1
+  SRC=$(find /app/node_modules -name "tfjs-node" -maxdepth 10 -type d 2>/dev/null | head -1); \
+  [ -n "$SRC" ] && [ -d "$SRC/deps" ] || exit 0; \
+  for dst in $(find ./node_modules -name "tfjs-node" -maxdepth 10 -type d 2>/dev/null); do \
+    [ -d "$dst/deps" ] || cp -r "$SRC/deps" "$dst/deps"; \
+  done' || true
+# Copy pre-compiled tfjs_binding.node from the builder workspace (ignore-scripts skipped it).
+RUN bash -c '\
+  SRC=$(find /app/node_modules -name "tfjs_binding.node" -maxdepth 15 2>/dev/null | head -1); \
+  [ -n "$SRC" ] || exit 0; \
+  NAPI=$(basename $(dirname "$SRC")); \
+  for dst in $(find ./node_modules -name "tfjs-node" -maxdepth 10 -type d 2>/dev/null); do \
+    mkdir -p "$dst/lib/$NAPI" && cp "$SRC" "$dst/lib/$NAPI/tfjs_binding.node"; \
+  done' || true
+# Rebuild only canvas (needs system cairo/pango headers).
+RUN npm rebuild canvas 2>&1
 WORKDIR /app
 
 # ---- runtime ----
