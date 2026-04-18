@@ -41,14 +41,25 @@ registerRoute(
   })
 );
 
-// Azure Blob Storage photos: cache-first with 30-day expiry (large assets, rarely change)
+// Azure Blob Storage photos: cache-first with 30-day expiry (large assets, rarely change).
+// Strip SAS query parameters (?sv=&se=&sig=…) from the cache key so that rotating
+// delegation keys (refreshed every 5.5 h) don't cause a cache miss on every page load.
+const stripSasParams = {
+  cacheKeyWillBeUsed: async ({ request }: { request: Request }) => {
+    const url = new URL(request.url);
+    url.search = ""; // drop all query params (SAS token)
+    return url.toString();
+  },
+};
+
 registerRoute(
   ({ url }) => url.hostname.includes(".blob.core.windows.net"),
   new CacheFirst({
     cacheName: "blob-photos",
     plugins: [
+      stripSasParams,
       new ExpirationPlugin({
-        maxEntries: 300,
+        maxEntries: 500,
         maxAgeSeconds: 30 * 24 * 60 * 60,
       }),
     ],
