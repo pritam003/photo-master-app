@@ -15,18 +15,19 @@
 
 import "dotenv/config";
 import { spawn } from "child_process";
-import { db, photosTable } from "@workspace/db";
-import { sql, isNull, and, like, eq } from "drizzle-orm";
+import { db, photosTable, googleSyncTable } from "@workspace/db";
+import { sql, eq } from "drizzle-orm";
 import { downloadBlob } from "./lib/azure-storage.js";
 import { analyzePhoto } from "./lib/azure-vision.js";
 import { generateVideoThumbnails } from "./lib/thumbnails.js";
 import { runFaceRecognitionJob } from "./lib/face-recognition.js";
 import { logger } from "./lib/logger.js";
+import { refreshGoogleAccessToken } from "./lib/google-auth.js";
 import exifr from "exifr";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const POLL_INTERVAL_MS   = 30_000;     // tags + GPS: every 30 s
+const POLL_INTERVAL_MS   = 30_000;     // tags + GPS + sync check: every 30 s
 const FACE_INTERVAL_MS   = 60 * 60 * 1000; // face recognition: every hour
 const GPS_RATE_LIMIT_MS  = 1100;       // Nominatim: max 1 req/sec
 const VISION_BATCH       = parseInt(process.env.VISION_BATCH ?? "5", 10);
@@ -175,6 +176,78 @@ async function runGpsPass(): Promise<void> {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
+// ── Google Photos auto-sync pass ─────────────────────────────────────────────
+
+/**
+ * Runs once per 30 s poll cycle but only syncs a user when their configured
+ * interval (12 h / 24 h / 7 days) has elapsed since their last successful sync.
+ * All per-user errors are caught so one bad account never blocks others.
+ */
+async function runGoogleSyncPass(): Promise<void> {
+  const rows = await db
+    .select()
+    .from(googleSyncTable)
+    .where(eq(googleSyncTable.syncEnabled, true));
+
+  if (rows.length === 0) return;
+
+  const now = Date.now();
+  for (const row of rows) {
+    const intervalMs = row.syncIntervalHours * 3600 * 1000;
+    const lastMs = row.lastSyncAt?.getTime() ?? 0;
+    if (now - lastMs < intervalMs) {
+      // Not due yet
+      continue;
+    }
+
+    logger.info({ userId: row.userId, intervalHours: row.syncIntervalHours }, "[worker] google-sync: user due, syncing");
+
+    try {
+      const { decryptToken } = await import("./lib/token-crypto.js");
+      const { fetchGoogleLibraryItems, importLibraryItems } = await import("./routes/google-import.js");
+
+      const plainRefresh = decryptToken(row.encryptedRefreshToken);
+      const accessToken = await refreshGoogleAccessToken(plainRefresh);
+      if (!accessToken) {
+        logger.warn({ userId: row.userId }, "[worker] google-sync: failed to refresh token, skipping");
+        continue;
+      }
+
+      // Fetch items created after lastSyncAt (or last 30 days if never synced)
+      const sinceDate = row.lastSyncAt
+        ? new Date(row.lastSyncAt.getTime() + 1000)
+        : new Date(now - 30 * 24 * 3600 * 1000);
+
+      const items = await fetchGoogleLibraryItems(accessToken, sinceDate);
+      logger.info({ userId: row.userId, count: items.length }, "[worker] google-sync: fetched items");
+
+      if (items.length > 0) {
+        // Lightweight status object — not exposed via HTTP for background runs
+        const status = { total: items.length, imported: 0, errors: 0, status: "importing", message: undefined as string | undefined };
+        await importLibraryItems(
+          items,
+          row.userId,
+          row.syncAlbumId ?? undefined,
+          accessToken,
+          plainRefresh,
+          status,
+        );
+        logger.info({ userId: row.userId, imported: status.imported, errors: status.errors }, "[worker] google-sync: pass complete");
+      }
+
+      // Update lastSyncAt regardless of whether items were found (marks interval as consumed)
+      await db
+        .update(googleSyncTable)
+        .set({ lastSyncAt: new Date(), updatedAt: new Date() })
+        .where(eq(googleSyncTable.userId, row.userId));
+
+    } catch (err) {
+      // Never let one user's error crash the whole pass
+      logger.error({ err: String(err), userId: row.userId }, "[worker] google-sync: user pass failed");
+    }
+  }
+}
+
 let _shutdown = false;
 
 process.on("SIGTERM", () => {
@@ -254,13 +327,14 @@ if (process.env.FACE_ONLY_MODE === "true") {
     }, FACE_INTERVAL_MS);
   }, 30_000);
 
-  // Vision + GPS + video thumbnails: run immediately, then every 30 s
+  // Vision + GPS + video thumbnails + Google sync: run immediately, then every 30 s
   async function pollLoop() {
     while (!_shutdown) {
       try {
         await runVisionPass();
         await runGpsPass();
         await runVideoThumbnailPass();
+        await runGoogleSyncPass();
       } catch (err) {
         logger.warn({ err }, "[worker] poll error");
       }

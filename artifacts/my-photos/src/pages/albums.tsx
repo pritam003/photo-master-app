@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import GoogleImportModal from "@/components/GoogleImportModal";
 import ShareAlbumModal from "@/components/ShareAlbumModal";
+import GoogleSyncSettings from "@/components/GoogleSyncSettings";
 
 export default function AlbumsPage() {
   const [showCreate, setShowCreate] = useState(false);
@@ -132,6 +133,12 @@ export default function AlbumsPage() {
             ))}
           </div>
         )}
+
+        {/* Google Auto-Sync settings card */}
+        <div className="mt-8">
+          <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">Google Auto-Sync</h2>
+          <GoogleSyncSettings albums={albums?.map((a: any) => ({ id: a.id, name: a.name })) ?? []} />
+        </div>
       </div>
 
       {showCreate && (

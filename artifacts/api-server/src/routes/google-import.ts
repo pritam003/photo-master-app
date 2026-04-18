@@ -1,9 +1,12 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
-import { db, photosTable, albumsTable, albumPhotosTable } from "@workspace/db";
+import { db, photosTable, albumsTable, albumPhotosTable, googleSyncTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import { uploadBlobFromStream } from "../lib/azure-storage.js";
 import { logger } from "../lib/logger.js";
+import { encryptToken } from "../lib/token-crypto.js";
+import { refreshGoogleAccessToken } from "../lib/google-auth.js";
 
 const router = Router();
 
@@ -11,6 +14,14 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 // APP_URL is the *frontend* SWA URL — used for post-callback redirects to /albums
 const APP_URL = process.env.APP_URL || "http://localhost:5173";
+
+// Google OAuth scopes:
+//   photospicker  — manual interactive import (Picker API)
+//   photoslibrary — automated background sync (Library API)
+const GOOGLE_SCOPES = [
+  "https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
+  "https://www.googleapis.com/auth/photoslibrary.readonly",
+].join(" ");
 
 /** Returns the API's own origin so REDIRECT_URI always points at the API, not the SWA frontend. */
 function apiOrigin(req: any): string {
@@ -187,27 +198,8 @@ async function runImport(importId: string, sessionId: string, userId: string, ac
   }
 }
 
-/** Refresh an expired Google access token. Returns the new token or undefined on failure. */
-async function refreshAccessToken(refreshToken: string): Promise<string | undefined> {
-  try {
-    const res = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: GOOGLE_CLIENT_ID!,
-        client_secret: GOOGLE_CLIENT_SECRET!,
-        refresh_token: refreshToken,
-        grant_type: "refresh_token",
-      }).toString(),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) { logger.warn({ status: res.status }, "Token refresh failed"); return undefined; }
-    const data = await res.json() as { access_token?: string };
-    return data.access_token;
-  } catch {
-    return undefined;
-  }
-}
+/** @deprecated Use refreshGoogleAccessToken from lib/google-auth.ts instead. */
+const refreshAccessToken = refreshGoogleAccessToken;
 
 /** Process a list of items, skipping already-processed IDs. Shared by initial run and resume. */
 async function processItems(
@@ -357,7 +349,7 @@ router.post("/google/auth-url", requireAuth, async (req: any, res) => {
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: "https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
+    scope: GOOGLE_SCOPES,
     access_type: "offline",
     state,
     prompt: "select_account consent",
@@ -401,6 +393,31 @@ router.get("/google/callback", async (req, res) => {
   const { access_token, refresh_token } = await tokenRes.json() as { access_token: string; refresh_token?: string };
   if (!refresh_token) {
     logger.warn("No refresh_token returned by Google — token refresh after expiry will not be possible");
+  }
+
+  // Persist encrypted refresh token for background auto-sync (upsert so re-auth refreshes it).
+  if (refresh_token) {
+    try {
+      await db
+        .insert(googleSyncTable)
+        .values({
+          userId: pending.userId,
+          encryptedRefreshToken: encryptToken(refresh_token),
+          syncEnabled: true,
+          syncIntervalHours: 24,
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: googleSyncTable.userId,
+          set: {
+            encryptedRefreshToken: encryptToken(refresh_token),
+            updatedAt: new Date(),
+          },
+        });
+      logger.info({ userId: pending.userId }, "[google-sync] refresh token saved (encrypted)");
+    } catch (err) {
+      logger.warn({ err: String(err) }, "[google-sync] failed to persist refresh token — auto-sync won't work");
+    }
   }
 
   // Create a Photos Picker session
@@ -506,5 +523,291 @@ router.post("/google/import/:id/resume", requireAuth, async (req: any, res) => {
     }
   })().catch(console.error);
 });
+
+// ── Auto-sync settings endpoints ──────────────────────────────────────────────
+
+// GET /api/google/sync/status — return sync config + last/next sync times
+router.get("/google/sync/status", requireAuth, async (req: any, res) => {
+  const [row] = await db
+    .select({
+      syncEnabled:       googleSyncTable.syncEnabled,
+      syncIntervalHours: googleSyncTable.syncIntervalHours,
+      lastSyncAt:        googleSyncTable.lastSyncAt,
+      syncAlbumId:       googleSyncTable.syncAlbumId,
+    })
+    .from(googleSyncTable)
+    .where(eq(googleSyncTable.userId, req.currentUser.id))
+    .limit(1);
+
+  if (!row) return res.json({ connected: false });
+
+  const nextSyncAt = row.lastSyncAt
+    ? new Date(row.lastSyncAt.getTime() + row.syncIntervalHours * 3600 * 1000)
+    : null;
+
+  res.json({
+    connected:         true,
+    syncEnabled:       row.syncEnabled,
+    syncIntervalHours: row.syncIntervalHours,
+    lastSyncAt:        row.lastSyncAt,
+    nextSyncAt,
+    syncAlbumId:       row.syncAlbumId,
+  });
+});
+
+// POST /api/google/sync/configure — update syncEnabled, syncIntervalHours, syncAlbumId
+router.post("/google/sync/configure", requireAuth, async (req: any, res) => {
+  const { syncEnabled, syncIntervalHours, syncAlbumId } = req.body as {
+    syncEnabled?: boolean;
+    syncIntervalHours?: number;
+    syncAlbumId?: string | null;
+  };
+
+  const VALID_INTERVALS = [12, 24, 168];
+  if (syncIntervalHours !== undefined && !VALID_INTERVALS.includes(syncIntervalHours)) {
+    return res.status(400).json({ error: `syncIntervalHours must be one of ${VALID_INTERVALS.join(", ")}` });
+  }
+
+  const updateFields: Record<string, unknown> = { updatedAt: new Date() };
+  if (syncEnabled !== undefined) updateFields.syncEnabled = syncEnabled;
+  if (syncIntervalHours !== undefined) updateFields.syncIntervalHours = syncIntervalHours;
+  if (syncAlbumId !== undefined) updateFields.syncAlbumId = syncAlbumId ?? null;
+
+  const result = await db
+    .update(googleSyncTable)
+    .set(updateFields)
+    .where(eq(googleSyncTable.userId, req.currentUser.id))
+    .returning({ syncEnabled: googleSyncTable.syncEnabled, syncIntervalHours: googleSyncTable.syncIntervalHours, syncAlbumId: googleSyncTable.syncAlbumId });
+
+  if (!result.length) return res.status(404).json({ error: "No Google sync connection found. Please connect Google Photos first." });
+  res.json({ updated: true, ...result[0] });
+});
+
+// DELETE /api/google/sync/disconnect — remove stored token (disables auto-sync)
+router.delete("/google/sync/disconnect", requireAuth, async (req: any, res) => {
+  await db.delete(googleSyncTable).where(eq(googleSyncTable.userId, req.currentUser.id));
+  res.json({ disconnected: true });
+});
+
+// POST /api/google/sync/trigger — kick off an immediate sync for the current user
+// Returns a syncId that can be polled via GET /api/google/import/:id
+router.post("/google/sync/trigger", requireAuth, async (req: any, res) => {
+  const [row] = await db
+    .select()
+    .from(googleSyncTable)
+    .where(eq(googleSyncTable.userId, req.currentUser.id))
+    .limit(1);
+
+  if (!row) {
+    return res.status(404).json({ error: "No Google sync connection found. Please connect Google Photos first." });
+  }
+  if (!row.syncEnabled) {
+    return res.status(409).json({ error: "Auto-sync is disabled. Enable it first or use the regular import." });
+  }
+
+  const syncId = randomUUID();
+  importStatuses.set(syncId, {
+    status: "importing",
+    albumName: "Google Auto-Sync",
+    total: 0,
+    imported: 0,
+    errors: 0,
+  });
+
+  res.json({ syncId });
+
+  // Run in background — does not block the response
+  (async () => {
+    const { decryptToken } = await import("../lib/token-crypto.js");
+    const status = importStatuses.get(syncId)!;
+    try {
+      const plainRefresh = decryptToken(row.encryptedRefreshToken);
+      const accessToken = await refreshGoogleAccessToken(plainRefresh);
+      if (!accessToken) throw new Error("Failed to obtain access token for manual trigger");
+
+      // Fetch photos newer than lastSyncAt (or last 30 days if never synced)
+      const sinceDate = row.lastSyncAt
+        ? new Date(row.lastSyncAt.getTime() + 1000)
+        : new Date(Date.now() - 30 * 24 * 3600 * 1000);
+
+      const items = await fetchGoogleLibraryItems(accessToken, sinceDate);
+      status.total = items.length;
+
+      if (items.length === 0) {
+        status.status = "done";
+        status.message = "No new photos found.";
+        return;
+      }
+
+      await importLibraryItems(items, row.userId, row.syncAlbumId ?? undefined, accessToken, plainRefresh, status);
+
+      if (status.status !== "error") {
+        status.status = "done";
+        await db
+          .update(googleSyncTable)
+          .set({ lastSyncAt: new Date(), updatedAt: new Date() })
+          .where(eq(googleSyncTable.userId, row.userId));
+      }
+    } catch (err: any) {
+      status.status = "error";
+      status.message = String(err?.message ?? err);
+      logger.error({ err: String(err), userId: row.userId }, "[google-sync] manual trigger failed");
+    }
+  })().catch(console.error);
+});
+
+// ── Shared helpers for Library API sync ──────────────────────────────────────
+
+/** Fetch all media items created after `since` using the Google Photos Library API. */
+export async function fetchGoogleLibraryItems(accessToken: string, since: Date): Promise<any[]> {
+  const items: any[] = [];
+  let pageToken: string | undefined;
+  const startDate = {
+    year:  since.getUTCFullYear(),
+    month: since.getUTCMonth() + 1,
+    day:   since.getUTCDate(),
+  };
+  const today = new Date();
+  const endDate = {
+    year:  today.getUTCFullYear(),
+    month: today.getUTCMonth() + 1,
+    day:   today.getUTCDate(),
+  };
+
+  do {
+    const body: Record<string, unknown> = {
+      pageSize: 100,
+      filters: { dateFilter: { ranges: [{ startDate, endDate }] } },
+    };
+    if (pageToken) body.pageToken = pageToken;
+
+    const res = await fetch("https://photoslibrary.googleapis.com/v1/mediaItems:search", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Library API error (${res.status}): ${text}`);
+    }
+
+    const data = await res.json() as { mediaItems?: any[]; nextPageToken?: string };
+    if (data.mediaItems) items.push(...data.mediaItems);
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
+  return items;
+}
+
+/** Import Library API media items (dedup by googleMediaItemId), streaming to Azure Blob. */
+export async function importLibraryItems(
+  items: any[],
+  userId: string,
+  albumId: string | undefined,
+  initialAccessToken: string,
+  refreshToken: string,
+  status: { total: number; imported: number; errors: number; status: string; message?: string },
+): Promise<void> {
+  const tokenHolder = { accessToken: initialAccessToken };
+
+  for (const item of items) {
+    const googleId: string = item.id;
+    const mimeType: string = item.mimeType || "image/jpeg";
+    const isVideo = mimeType.startsWith("video/");
+    const ext = isVideo ? ".mp4" : ".jpg";
+
+    try {
+      // Dedup: skip if already imported
+      const existing = await db
+        .select({ id: photosTable.id })
+        .from(photosTable)
+        .where(eq(photosTable.googleMediaItemId, googleId))
+        .limit(1);
+      if (existing.length > 0) continue;
+
+      const baseUrl: string = item.baseUrl || "";
+      const downloadUrl = isVideo ? `${baseUrl}=dv` : `${baseUrl}=d`;
+
+      const MAX_RETRIES = 3;
+      let size = 0;
+      let blobName = "";
+
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        const controller = new AbortController();
+        const timeoutHandle = setTimeout(() => controller.abort(), 120_000);
+        try {
+          const res = await fetch(downloadUrl, {
+            headers: { Authorization: `Bearer ${tokenHolder.accessToken}` },
+            signal: controller.signal,
+          });
+          clearTimeout(timeoutHandle);
+
+          if (res.status === 401 && attempt < MAX_RETRIES) {
+            const newToken = await refreshGoogleAccessToken(refreshToken);
+            if (newToken) tokenHolder.accessToken = newToken;
+            continue;
+          }
+          if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
+            await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt)));
+            continue;
+          }
+          if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+
+          size = parseInt(res.headers.get("content-length") ?? "0", 10);
+          blobName = `${userId}/${albumId ?? "library"}/${randomUUID()}${ext}`;
+          await uploadBlobFromStream(blobName, Readable.fromWeb(res.body as any), mimeType);
+          break;
+        } catch (err: any) {
+          clearTimeout(timeoutHandle);
+          const isTransient =
+            err?.name === "AbortError" ||
+            String(err).includes("ECONNRESET") ||
+            String(err).includes("fetch failed");
+          if (isTransient && attempt < MAX_RETRIES) {
+            await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt)));
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      if (!blobName) throw new Error("No blob uploaded");
+
+      const meta = item.mediaMetadata;
+      const [photo] = await db
+        .insert(photosTable)
+        .values({
+          userId,
+          filename: item.filename || `photo${ext}`,
+          blobName,
+          contentType: mimeType,
+          size,
+          width:  meta?.width  ? Number(meta.width)  : null,
+          height: meta?.height ? Number(meta.height) : null,
+          takenAt: meta?.creationTime ? new Date(meta.creationTime) : null,
+          googleMediaItemId: googleId,
+        })
+        .returning();
+
+      if (albumId) {
+        await db
+          .insert(albumPhotosTable)
+          .values({ albumId, photoId: photo.id })
+          .onConflictDoNothing();
+      }
+
+      status.imported++;
+      await new Promise(r => setTimeout(r, 150)); // stay within Google quota
+    } catch (err: any) {
+      logger.error({ err: String(err), googleId, userId }, "[google-sync] failed to import item");
+      status.errors++;
+    }
+  }
+}
 
 export default router;

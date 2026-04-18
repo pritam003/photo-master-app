@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, integer, bigint, timestamp, uuid, index } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, integer, bigint, timestamp, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -22,11 +22,14 @@ export const photosTable = pgTable("photos", {
   takenAt: timestamp("taken_at"),
   tags: text("tags"),
   locationName: text("location_name"),
+  /** Google Media Item ID — set when photo was imported from Google Photos auto-sync. */
+  googleMediaItemId: text("google_media_item_id"),
 }, (t) => [
   index("photos_user_uploaded_idx").on(t.userId, t.uploadedAt),
   index("photos_user_trashed_idx").on(t.userId, t.trashed),
   index("photos_user_hidden_idx").on(t.userId, t.hidden),
   index("photos_user_favorite_idx").on(t.userId, t.favorite),
+  uniqueIndex("photos_google_item_idx").on(t.userId, t.googleMediaItemId),
 ]);
 
 export const albumsTable = pgTable("albums", {
@@ -70,6 +73,29 @@ export const userSettingsTable = pgTable("user_settings", {
   archiveTotpSecret: text("archive_totp_secret"),
 });
 
+// ── Google Photos auto-sync ───────────────────────────────────────────────────
+
+/**
+ * Stores per-user Google OAuth credentials and sync configuration.
+ * The refresh token is stored AES-256-GCM encrypted (see lib/token-crypto.ts).
+ */
+export const googleSyncTable = pgTable("google_sync", {
+  userId: text("user_id").primaryKey(),
+  /** AES-256-GCM encrypted refresh token: "iv:ciphertext:authTag" (hex). */
+  encryptedRefreshToken: text("encrypted_refresh_token").notNull(),
+  syncEnabled: boolean("sync_enabled").default(true).notNull(),
+  /** How many hours between automatic syncs. Supported values: 12, 24, 168. */
+  syncIntervalHours: integer("sync_interval_hours").default(24).notNull(),
+  /** Last time a successful sync completed. NULL = never synced. */
+  lastSyncAt: timestamp("last_sync_at"),
+  /** If set, new photos are added to this album in addition to the library. */
+  syncAlbumId: uuid("sync_album_id").references(() => albumsTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type GoogleSync = typeof googleSyncTable.$inferSelect;
+
 // ── Face recognition ──────────────────────────────────────────────────────────
 
 /** A recognised person (cluster of similar faces belonging to one user). */
@@ -109,5 +135,6 @@ export type ShareLink = typeof shareLinksTable.$inferSelect;
 export type AlbumShare = typeof albumSharesTable.$inferSelect;
 export type Person = typeof peopleTable.$inferSelect;
 export type PhotoFace = typeof photoFacesTable.$inferSelect;
+export type GoogleSync = typeof googleSyncTable.$inferSelect;
 export type InsertPhoto = z.infer<typeof insertPhotoSchema>;
 export type InsertAlbum = z.infer<typeof insertAlbumSchema>;

@@ -502,6 +502,68 @@ paths:
         "404":
           description: Not found or expired
 
+  /google/sync/status:
+    get:
+      operationId: getGoogleSyncStatus
+      tags: [google]
+      summary: Get Google Photos auto-sync status and configuration
+      responses:
+        "200":
+          description: Sync status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoogleSyncStatus"
+
+  /google/sync/configure:
+    post:
+      operationId: configureGoogleSync
+      tags: [google]
+      summary: Update auto-sync settings (enable/disable, interval, target album)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GoogleSyncConfigureRequest"
+      responses:
+        "200":
+          description: Updated settings
+        "400":
+          description: Invalid syncIntervalHours value
+        "404":
+          description: No Google connection found
+
+  /google/sync/disconnect:
+    delete:
+      operationId: disconnectGoogleSync
+      tags: [google]
+      summary: Remove stored Google refresh token and disable auto-sync
+      responses:
+        "200":
+          description: Disconnected
+
+  /google/sync/trigger:
+    post:
+      operationId: triggerGoogleSync
+      tags: [google]
+      summary: Kick off an immediate background sync; returns syncId for progress polling
+      responses:
+        "200":
+          description: Sync started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  syncId:
+                    type: string
+                required: [syncId]
+        "404":
+          description: No Google connection found
+        "409":
+          description: Auto-sync disabled
+
 components:
   schemas:
     HealthStatus:
@@ -631,3 +693,38 @@ components:
           type: string
           format: date-time
       required: [photo, expiresAt]
+
+    GoogleSyncStatus:
+      type: object
+      properties:
+        connected:
+          type: boolean
+        syncEnabled:
+          type: boolean
+        syncIntervalHours:
+          type: integer
+          enum: [12, 24, 168]
+        lastSyncAt:
+          type: string
+          format: date-time
+          nullable: true
+        nextSyncAt:
+          type: string
+          format: date-time
+          nullable: true
+        syncAlbumId:
+          type: string
+          nullable: true
+      required: [connected]
+
+    GoogleSyncConfigureRequest:
+      type: object
+      properties:
+        syncEnabled:
+          type: boolean
+        syncIntervalHours:
+          type: integer
+          enum: [12, 24, 168]
+        syncAlbumId:
+          type: string
+          nullable: true
