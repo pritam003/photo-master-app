@@ -151,7 +151,7 @@ export default function GoogleSyncSettings({ albums }: { albums?: Album[] }) {
       });
       const data = await res.json() as { authUrl?: string; error?: string };
       if (!res.ok) throw new Error(data.error ?? `${res.status}`);
-      if (data.authUrl) window.location.href = data.authUrl;
+      if (data.authUrl) window.open(data.authUrl, "_blank", "noopener,noreferrer");
     } catch (e) {
       setError(String(e));
       setConnecting(false);
