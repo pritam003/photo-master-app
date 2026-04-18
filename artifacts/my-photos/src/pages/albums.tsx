@@ -31,8 +31,11 @@ export default function AlbumsPage() {
       setTimeout(() => setSyncBanner(null), 5000);
     }
     if (syncError) {
-      setSyncBanner({ type: "error", msg: `Google Photos connection failed: ${syncError.replace(/_/g, " ")}` });
-      setTimeout(() => setSyncBanner(null), 8000);
+      const msg = syncError === "missing_library_scope"
+        ? "Google Photos Library access was not granted. Make sure 'photoslibrary.readonly' is added to your OAuth consent screen in Google Cloud Console, then try connecting again."
+        : `Google Photos connection failed: ${syncError.replace(/_/g, " ")}`;
+      setSyncBanner({ type: "error", msg });
+      setTimeout(() => setSyncBanner(null), 12000);
     }
     if (importId || importError || syncConnected || syncError) {
       window.history.replaceState({}, "", window.location.pathname);
