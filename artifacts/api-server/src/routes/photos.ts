@@ -122,6 +122,7 @@ router.get("/photos/on-this-day", async (req: any, res) => {
         size: photo.size,
         url,
         thumbnailUrl,
+      });
     }
 
     // Fetch up to 20 photos per day-of-week for all 7 days in one query
