@@ -52,13 +52,9 @@ export default function Sidebar({ onUploadClick, darkMode, onToggleDark, collaps
           await reg.update();
         }
       }
-      // Clear API/app-shell caches but keep blob-photos (thumbnails are already small after backfill)
+      // Clear ALL caches including blob-photos so stale large thumbnails are evicted
       const cacheNames = await caches.keys();
-      await Promise.all(
-        cacheNames
-          .filter(n => n !== "blob-photos")
-          .map(n => caches.delete(n))
-      );
+      await Promise.all(cacheNames.map(n => caches.delete(n)));
     } catch { /* best-effort */ }
 
     setRestartCountdown(10);
