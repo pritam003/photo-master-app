@@ -508,7 +508,7 @@ const MonthGroup = memo(function MonthGroup({ month, monthPhotos, photoIndexMap,
   };
 
   return (
-    <div className="mb-8" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 600px" }}>
+    <div className="mb-8">
       {/* Google Photos-style day header */}
       <div className="flex items-center gap-2 mb-2 px-0.5 group/header">
         {/* Select-all circle — visible on hover or when selecting */}
