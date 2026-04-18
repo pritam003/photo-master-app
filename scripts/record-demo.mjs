@@ -63,9 +63,9 @@ async function waitNoOverlay(page) {
 
 async function goTo(page, path) {
   await page.goto(`${BASE_URL}${path}`, { waitUntil: "load", timeout: 60000 });
-  await pause(2500);
+  await pause(1200);
   await waitForImages(page);
-  await pause(500);
+  await pause(300);
 }
 
 // ── Scene helpers ──────────────────────────────────────────────────────────────
@@ -73,19 +73,17 @@ async function goTo(page, path) {
 async function sceneLibrary(page) {
   console.log("  📷 Library…");
   await goTo(page, "/");
-  await pause(1000);
-  // Slowly scroll down to reveal the photo grid
-  await smoothScroll(page, 700, 2200);
-  await pause(800);
-  await smoothScroll(page, -700, 1600);
-  await pause(600);
+  await pause(500);
+  await smoothScroll(page, 600, 1200);
+  await pause(400);
+  await smoothScroll(page, -600, 900);
+  await pause(300);
 }
 
 async function sceneMemories(page) {
   console.log("  🗓  Memories reel…");
   await goTo(page, "/");
-  // Just show the top reel for 3s — don't click to avoid modal state issues
-  await pause(3000);
+  await pause(1500);
 }
 
 async function sceneLightbox(page) {
@@ -95,69 +93,64 @@ async function sceneLightbox(page) {
   const photos = page.locator("[data-photo-id]");
   const count = await photos.count();
   if (count > 0) {
-    // Click the 3rd photo for variety
     const idx = Math.min(2, count - 1);
     await photos.nth(idx).click();
-    await pause(2000);
+    await pause(1200);
     await waitForImages(page);
-    await pause(2000);
-    // Navigate to next photo
+    await pause(1000);
     await page.keyboard.press("ArrowRight");
-    await pause(1500);
+    await pause(800);
     await page.keyboard.press("Escape");
     await waitNoOverlay(page);
-    await pause(400);
+    await pause(300);
   }
 }
 
 async function sceneAlbums(page) {
   console.log("  📁 Albums…");
-  // Navigate via sidebar link
   await page.getByRole('link', { name: 'Albums' }).first().click();
-  await pause(2500);
+  await pause(1500);
   await waitForImages(page);
-  await pause(1000);
+  await pause(700);
 
-  // Open the first album if any exist
   const albumCards = page.locator("a[href*='/albums/']");
   if (await albumCards.count() > 0) {
     await albumCards.first().click();
-    await pause(2000);
+    await pause(1200);
     await waitForImages(page);
-    await pause(1500);
+    await pause(800);
   }
 }
 
 async function scenePeople(page) {
   console.log("  👤 People…");
   await page.getByRole('link', { name: 'People' }).first().click();
-  await pause(2500);
+  await pause(1500);
   await waitForImages(page);
-  await pause(1000);
+  await pause(700);
 
-  // Open first person if exists
   const personCards = page.locator("a[href*='/people/']");
   if (await personCards.count() > 0) {
     await personCards.first().click();
-    await pause(2000);
+    await pause(1200);
     await waitForImages(page);
-    await pause(1500);
+    await pause(800);
   }
 }
 
 async function sceneFavorites(page) {
   console.log("  ❤️  Favorites…");
   await page.getByRole('link', { name: 'Favorites' }).first().click();
-  await pause(2500);
+  await pause(1500);
   await waitForImages(page);
-  await pause(1000);
+  await pause(700);
 }
 
 async function sceneArchive(page) {
   console.log("  🔒 Archive…");
   await page.getByRole('link', { name: 'Archive' }).first().click();
-  await pause(2500);
-  await pause(1200); // show the TOTP unlock screen
+  await pause(1500);
+  await pause(800); // show the TOTP unlock screen
 }
 
 async function sceneSearch(page) {
@@ -168,14 +161,13 @@ async function sceneSearch(page) {
   if (await searchInput.isVisible()) {
     await searchInput.click();
     await pause(400);
-    await page.keyboard.type("microsoft", { delay: 110 });
-    await pause(2500);
-    await waitForImages(page);
+    await page.keyboard.type("microsoft", { delay: 80 });
     await pause(1500);
-    // Clear
+    await waitForImages(page);
+    await pause(800);
     await searchInput.click({ clickCount: 3 });
     await page.keyboard.press("Backspace");
-    await pause(600);
+    await pause(300);
   }
 }
 
@@ -185,8 +177,7 @@ async function sceneUpload(page) {
   const uploadBtn = page.locator("[data-testid='button-upload']");
   if (await uploadBtn.isVisible()) {
     await uploadBtn.click();
-    await pause(2500);
-    // Close via the X button in the modal header
+    await pause(1500);
     const closeBtn = page.locator("div.fixed.inset-0.z-50 button").first();
     if (await closeBtn.isVisible()) {
       await closeBtn.click();
@@ -200,9 +191,9 @@ async function sceneUpload(page) {
 async function sceneTrash(page) {
   console.log("  🗑  Trash…");
   await page.getByRole('link', { name: 'Trash' }).first().click();
-  await pause(2500);
+  await pause(1500);
   await waitForImages(page);
-  await pause(1000);
+  await pause(700);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -232,7 +223,7 @@ async function main() {
 
   // End on the library
   await goTo(page, "/");
-  await pause(1000);
+  await pause(500);
 
   await context.close();
   await browser.close();
