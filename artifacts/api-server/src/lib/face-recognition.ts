@@ -229,7 +229,19 @@ export async function processFacesForPhoto(
   try {
     await ensureModels();
     const faces = await detectFacesInBuffer(buffer);
-    if (faces.length === 0) return;
+
+    if (faces.length === 0) {
+      // Insert a sentinel so this photo is skipped in future scans (avoids
+      // re-processing photos that genuinely have no detectable faces).
+      await db.insert(photoFacesTable).values({
+        photoId,
+        userId,
+        personId: null,
+        azurePersistedFaceId: null,
+        boundingBox: null,
+      }).onConflictDoNothing();
+      return;
+    }
 
     for (const face of faces) {
       const personId = await findOrCreatePerson(userId, face.descriptor, face.box, buffer);
@@ -286,7 +298,7 @@ export async function runFaceRecognitionJob(): Promise<void> {
               SELECT 1 FROM photo_faces pf WHERE pf.photo_id = p.id
             )
           ORDER BY p.uploaded_at DESC
-          LIMIT 200`,
+          LIMIT 5000`,
     );
     const photos = (rows as any).rows ?? [];
     if (photos.length === 0) return;

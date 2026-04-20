@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db, peopleTable, photoFacesTable, photosTable } from "@workspace/db";
 import { eq, and, sql, isNotNull } from "drizzle-orm";
 import { generateSasUrl } from "../lib/azure-storage.js";
-import { getJobProgress } from "../lib/face-recognition.js";
+import { getJobProgress, runFaceRecognitionJob } from "../lib/face-recognition.js";
 
 const router = Router();
 
@@ -49,7 +49,34 @@ router.get("/people", async (req: any, res) => {
 
 // ── GET /people/scan-progress ── face-scan job progress ──────────────────────
 router.get("/people/scan-progress", async (_req: any, res) => {
-  res.json(getJobProgress());
+  const inProcess = getJobProgress();
+  // Get real progress from DB — covers both API-server-triggered and worker-triggered jobs
+  try {
+    const totalResult = await db.execute(
+      sql`SELECT COUNT(*)::int AS total FROM photos WHERE content_type LIKE 'image/%' AND trashed = false AND hidden = false`,
+    );
+    const processedResult = await db.execute(
+      sql`SELECT COUNT(DISTINCT photo_id)::int AS processed FROM photo_faces`,
+    );
+    const total = Number((totalResult as any).rows?.[0]?.total ?? 0);
+    const processed = Number((processedResult as any).rows?.[0]?.processed ?? 0);
+    res.json({ running: inProcess.running, processed, total });
+  } catch {
+    res.json(inProcess);
+  }
+});
+
+// ── POST /people/start-scan ── trigger face recognition now ──────────────────
+router.post("/people/start-scan", async (_req: any, res) => {
+  const { running } = getJobProgress();
+  if (running) {
+    return res.status(409).json({ error: "Scan already in progress" });
+  }
+  // Fire and forget — runs in background
+  runFaceRecognitionJob().catch((err) =>
+    console.error("[people] start-scan background error:", err),
+  );
+  res.status(202).json({ started: true });
 });
 
 // ── GET /people/:id ── person detail with paginated photos ───────────────────
