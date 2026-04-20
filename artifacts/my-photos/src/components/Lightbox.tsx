@@ -33,22 +33,16 @@ export default function Lightbox({ photos, initialIndex, onClose, onPhotoTrash }
   // Auto-focus container so keyboard events work immediately
   useEffect(() => { containerRef.current?.focus(); }, []);
 
-  // Lock body scroll while lightbox is open.
-  // The position:fixed + top trick prevents the browser from jumping to scrollY=0
-  // (which plain overflow:hidden causes). On cleanup we scroll back to the exact position.
+  // Lock scroll while lightbox is open and restore exactly when it closes.
+  // The page uses a custom overflow-y:auto container (.main-scroll), not window scroll,
+  // so we save/restore scrollTop on that element rather than using the position:fixed trick.
   useEffect(() => {
-    const scrollY = window.scrollY;
-    const body = document.body;
-    body.style.overflow = "hidden";
-    body.style.position = "fixed";
-    body.style.top = `-${scrollY}px`;
-    body.style.width = "100%";
+    const scroller = document.querySelector<HTMLElement>(".main-scroll") ?? document.documentElement;
+    const savedTop = scroller.scrollTop;
+    scroller.style.overflow = "hidden";
     return () => {
-      body.style.overflow = "";
-      body.style.position = "";
-      body.style.top = "";
-      body.style.width = "";
-      window.scrollTo({ top: scrollY, behavior: "instant" });
+      scroller.style.overflow = "";
+      scroller.scrollTop = savedTop;
     };
   }, []);
 
