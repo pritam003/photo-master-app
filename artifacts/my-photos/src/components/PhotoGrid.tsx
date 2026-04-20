@@ -139,9 +139,23 @@ export default function PhotoGrid({ photos, emptyMessage = "No photos yet", date
     });
   }, []);
 
-  const handleOpenLightbox = useCallback((idx: number) => setLightboxIndex(idx), []);
+  const savedScrollRef = useRef<number>(0);
 
-  const handleCloseLightbox = useCallback(() => setLightboxIndex(null), []);
+  const handleOpenLightbox = useCallback((idx: number) => {
+    const scroller = document.querySelector<HTMLElement>(".main-scroll") ?? document.documentElement;
+    savedScrollRef.current = scroller.scrollTop;
+    setLightboxIndex(idx);
+  }, []);
+
+  const handleCloseLightbox = useCallback(() => {
+    setLightboxIndex(null);
+    // Restore scroll position after React flushes the close re-render
+    const saved = savedScrollRef.current;
+    requestAnimationFrame(() => {
+      const scroller = document.querySelector<HTMLElement>(".main-scroll") ?? document.documentElement;
+      scroller.scrollTop = saved;
+    });
+  }, []);
 
   const handleBulkDownload = useCallback(async () => {
     const selectedPhotos = photos.filter(p => selectedIds.has(p.id));
