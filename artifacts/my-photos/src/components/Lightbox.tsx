@@ -33,6 +33,13 @@ export default function Lightbox({ photos, initialIndex, onClose, onPhotoTrash }
   // Auto-focus container so keyboard events work immediately
   useEffect(() => { containerRef.current?.focus(); }, []);
 
+  // Prevent body scroll while lightbox is open
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
   const prev = () => setIndex(i => Math.max(0, i - 1));
   const next = () => setIndex(i => Math.min(photos.length - 1, i + 1));
 

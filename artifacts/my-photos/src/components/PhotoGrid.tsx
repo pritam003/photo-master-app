@@ -35,6 +35,7 @@ interface PhotoGridProps {
 
 export default function PhotoGrid({ photos, emptyMessage = "No photos yet", dateField = "taken", justified = false, onRemoveFromAlbum, onTrash, onBulkTrash, onHide, onBulkHide, onPhotoTrash }: PhotoGridProps) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const savedScrollY = useRef<number>(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkAlbumPicker, setShowBulkAlbumPicker] = useState(false);
   const [bulkAlbumAdded, setBulkAlbumAdded] = useState<string | null>(null);
@@ -139,7 +140,16 @@ export default function PhotoGrid({ photos, emptyMessage = "No photos yet", date
     });
   }, []);
 
-  const handleOpenLightbox = useCallback((idx: number) => setLightboxIndex(idx), []);
+  const handleOpenLightbox = useCallback((idx: number) => {
+    savedScrollY.current = window.scrollY;
+    setLightboxIndex(idx);
+  }, []);
+
+  const handleCloseLightbox = useCallback(() => {
+    setLightboxIndex(null);
+    // Restore scroll position so the user lands back at the photo they clicked
+    requestAnimationFrame(() => window.scrollTo({ top: savedScrollY.current, behavior: "instant" }));
+  }, []);
 
   const handleBulkDownload = useCallback(async () => {
     const selectedPhotos = photos.filter(p => selectedIds.has(p.id));
@@ -294,7 +304,7 @@ export default function PhotoGrid({ photos, emptyMessage = "No photos yet", date
         <Lightbox
           photos={photos}
           initialIndex={lightboxIndex}
-          onClose={() => setLightboxIndex(null)}
+          onClose={handleCloseLightbox}
           onPhotoTrash={onPhotoTrash}
         />
       )}
