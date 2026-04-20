@@ -1,41 +1,36 @@
 /**
- * Face recognition using Azure Face API (LargeFaceList + FindSimilars).
+ * Face detection using Azure Face API (detection_01, basic — no identification approval needed).
  *
- * Strategy
- * ────────
- * • One Azure LargeFaceList per user stores all detected face descriptors.
- * • For each photo: detect faces via Azure API → get transient face IDs.
- * • For each face: persist it in the LargeFaceList, then use FindSimilars
- *   to check if it matches any existing person (by stored persistedFaceId).
- * • If similarity >= threshold → assign to matching person.
- * • If no match → create a new person row.
- * • Retrain the LargeFaceList periodically so FindSimilar stays accurate.
+ * NOTE: Azure Face API Identification/Verification (recognition models, LargeFaceList,
+ * FindSimilars, person grouping across photos) requires Limited Access approval:
+ * https://aka.ms/facerecognition
+ *
+ * Until approval is granted, each detected face creates its own person entry.
+ * Apply for access and re-run the scan to get proper cross-photo grouping.
  */
 
 import { randomUUID } from "crypto";
 import { db, peopleTable, photoFacesTable } from "@workspace/db";
-import { eq, and, isNotNull, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { uploadBlob, downloadBlob } from "./azure-storage.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const FACE_ENDPOINT = (process.env.AZURE_FACE_ENDPOINT ?? "").replace(/\/$/, "");
 const FACE_KEY = process.env.AZURE_FACE_KEY ?? "";
-const SIMILARITY_THRESHOLD = parseFloat(process.env.FACE_SIMILARITY_THRESHOLD ?? "0.6");
+
+/** ~6 req/s — safely under the S0 10 TPS rate limit. */
+const THROTTLE_MS = 160;
 
 function hasFaceApi(): boolean {
   return !!FACE_ENDPOINT && !!FACE_KEY;
 }
 
-// ── Azure Face API helpers ────────────────────────────────────────────────────
-
-async function faceReq(method: string, path: string, body?: object): Promise<Response> {
-  return fetch(`${FACE_ENDPOINT}/face/v1.0${path}`, {
-    method,
-    headers: { "Ocp-Apim-Subscription-Key": FACE_KEY, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+function sleep(ms: number): Promise<void> {
+  return new Promise(r => setTimeout(r, ms));
 }
+
+// ── Azure Face API helpers ────────────────────────────────────────────────────
 
 async function faceReqBinary(path: string, buffer: Buffer, contentType: string): Promise<Response> {
   return fetch(`${FACE_ENDPOINT}/face/v1.0${path}`, {
@@ -45,54 +40,28 @@ async function faceReqBinary(path: string, buffer: Buffer, contentType: string):
   });
 }
 
-// ── LargeFaceList helpers ─────────────────────────────────────────────────────
-
-const _ensuredLists = new Set<string>();
-
-function listIdForUser(userId: string): string {
-  return `u-${userId.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 60)}`;
-}
-
-async function ensureList(listId: string): Promise<void> {
-  if (_ensuredLists.has(listId)) return;
-  const checkRes = await faceReq("GET", `/largefacelists/${listId}`);
-  if (checkRes.status === 404) {
-    const createRes = await faceReq("PUT", `/largefacelists/${listId}`, {
-      name: listId,
-      recognitionModel: "recognition_04",
-    });
-    if (!createRes.ok) throw new Error(`[face-recognition] ensureList failed: ${await createRes.text()}`);
+/**
+ * Detect faces using detection_01 (basic bounding-box detection, no recognition
+ * model, no Identification/Verification features → no approval required).
+ * Returns null on persistent 429 (caller should skip without inserting sentinel).
+ */
+async function detectFaces(buffer: Buffer, contentType: string): Promise<any[] | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await faceReqBinary(
+      "/detect?detectionModel=detection_01&returnFaceId=false",
+      buffer, contentType,
+    );
+    if (res.ok) return res.json();
+    if (res.status === 429) {
+      await sleep(2000 * (attempt + 1)); // 2s → 4s → 6s back-off
+      continue;
+    }
+    const errText = await res.text();
+    console.warn("[face-recognition] detect failed:", errText.slice(0, 300));
+    return [];
   }
-  _ensuredLists.add(listId);
-}
-
-async function detectFaces(buffer: Buffer, contentType: string): Promise<any[]> {
-  const res = await faceReqBinary(
-    "/detect?detectionModel=detection_03&recognitionModel=recognition_04&returnFaceId=true",
-    buffer, contentType,
-  );
-  if (!res.ok) { console.warn("[face-recognition] detect failed:", await res.text()); return []; }
-  return res.json();
-}
-
-async function persistFace(listId: string, faceId: string): Promise<string | null> {
-  const res = await faceReq("POST", `/largefacelists/${listId}/persistedfaces`, { faceId });
-  if (!res.ok) return null;
-  const data: any = await res.json();
-  return data.persistedFaceId ?? null;
-}
-
-async function findSimilar(listId: string, faceId: string): Promise<any[]> {
-  const res = await faceReq("POST", "/findsimilars", {
-    faceId, largeFaceListId: listId, maxNumOfCandidatesReturned: 1, mode: "matchPerson",
-  });
-  if (!res.ok) return [];
-  return res.json();
-}
-
-async function triggerTraining(listId: string): Promise<void> {
-  await faceReq("POST", `/largefacelists/${listId}/train`);
-  await new Promise(r => setTimeout(r, 2000));
+  // Exhausted retries on 429 — skip this photo for now (no sentinel inserted)
+  return null;
 }
 
 // ── Per-photo processing ──────────────────────────────────────────────────────
@@ -105,80 +74,58 @@ async function processFacesForPhotoAzure(
 ): Promise<void> {
   if (!contentType.startsWith("image/")) return;
 
-  const listId = listIdForUser(userId);
-  await ensureList(listId);
+  // Throttle to stay under S0 rate limit
+  await sleep(THROTTLE_MS);
 
   const faces = await detectFaces(buffer, contentType);
 
+  if (faces === null) {
+    // 429 exhausted — don't insert sentinel, retry next scan run
+    return;
+  }
+
   if (faces.length === 0) {
-    // Insert sentinel so this photo is skipped in future scans
+    // Genuinely no faces → sentinel so this photo is skipped in future scans
     await db.insert(photoFacesTable).values({
       photoId, userId, personId: null, azurePersistedFaceId: null, boundingBox: null,
     }).onConflictDoNothing();
     return;
   }
 
-  // Load existing persisted face IDs → person IDs for this user (for matching)
-  const existingFaces = await db
-    .select({ personId: photoFacesTable.personId, persistedFaceId: photoFacesTable.azurePersistedFaceId })
-    .from(photoFacesTable)
-    .where(and(eq(photoFacesTable.userId, userId), isNotNull(photoFacesTable.personId), isNotNull(photoFacesTable.azurePersistedFaceId)))
-    .limit(2000);
-
-  const faceIdToPersonId = new Map(
-    existingFaces.filter(f => f.persistedFaceId && f.personId).map(f => [f.persistedFaceId!, f.personId!]),
-  );
-
   for (const face of faces) {
-    const persistedFaceId = await persistFace(listId, face.faceId);
-    if (!persistedFaceId) continue;
+    const { top, left, width, height } = face.faceRectangle;
 
-    let personId: string | null = null;
+    // Each face gets its own person entry (no cross-photo grouping without
+    // Face API Identification approval — see https://aka.ms/facerecognition)
+    const [newPerson] = await db.insert(peopleTable).values({ userId }).returning();
+    const personId = newPerson.id;
 
-    if (faceIdToPersonId.size > 0) {
-      const candidates = await findSimilar(listId, face.faceId);
-      if (candidates.length > 0 && candidates[0].confidence >= SIMILARITY_THRESHOLD) {
-        personId = faceIdToPersonId.get(candidates[0].persistedFaceId) ?? null;
-      }
-    }
+    // Crop & upload face thumbnail as person cover image
+    try {
+      const { default: sharp } = await import("sharp");
+      const pad = Math.round(Math.max(width, height) * 0.4);
+      const meta = await sharp(buffer).metadata();
+      const crop = {
+        left: Math.max(0, left - pad),
+        top: Math.max(0, top - pad),
+        width: Math.min((meta.width ?? 9999) - Math.max(0, left - pad), width + pad * 2),
+        height: Math.min((meta.height ?? 9999) - Math.max(0, top - pad), height + pad * 2),
+      };
+      const thumbBuf = await sharp(buffer).extract(crop)
+        .resize(256, 256, { fit: "cover" }).jpeg({ quality: 85 }).toBuffer();
+      const blobName = `${userId}/faces/${randomUUID()}.jpg`;
+      await uploadBlob(blobName, thumbBuf, "image/jpeg");
+      await db.update(peopleTable).set({ coverFaceBlob: blobName }).where(eq(peopleTable.id, personId));
+    } catch { /* non-fatal — person still created */ }
 
-    if (!personId) {
-      const [newPerson] = await db.insert(peopleTable).values({ userId }).returning();
-      personId = newPerson.id;
-
-      // Crop face thumbnail and use as person cover
-      try {
-        const { default: sharp } = await import("sharp");
-        const { top, left, width, height } = face.faceRectangle;
-        const pad = Math.round(Math.max(width, height) * 0.4);
-        const meta = await sharp(buffer).metadata();
-        const crop = {
-          left: Math.max(0, left - pad),
-          top: Math.max(0, top - pad),
-          width: Math.min((meta.width ?? 9999) - Math.max(0, left - pad), width + pad * 2),
-          height: Math.min((meta.height ?? 9999) - Math.max(0, top - pad), height + pad * 2),
-        };
-        const thumbBuf = await sharp(buffer).extract(crop).resize(256, 256, { fit: "cover" }).jpeg({ quality: 85 }).toBuffer();
-        const blobName = `${userId}/faces/${randomUUID()}.jpg`;
-        await uploadBlob(blobName, thumbBuf, "image/jpeg");
-        await db.update(peopleTable).set({ coverFaceBlob: blobName }).where(eq(peopleTable.id, personId));
-      } catch { /* non-fatal */ }
-    }
-
-    const boundingBox = JSON.stringify({
-      top: face.faceRectangle.top, left: face.faceRectangle.left,
-      width: face.faceRectangle.width, height: face.faceRectangle.height,
-    });
-
+    const boundingBox = JSON.stringify({ top, left, width, height });
     await db.insert(photoFacesTable).values({
-      photoId, userId, personId, azurePersistedFaceId: persistedFaceId, boundingBox,
+      photoId, userId, personId, azurePersistedFaceId: null, boundingBox,
     }).onConflictDoNothing();
-
-    faceIdToPersonId.set(persistedFaceId, personId);
   }
 }
 
-// ── Public entry point ────────────────────────────────────────────────────────
+// ── Public API ────────────────────────────────────────────────────────────────
 
 export async function processFacesForPhoto(
   photoId: string,
@@ -195,7 +142,7 @@ export async function processFacesForPhoto(
   }
 }
 
-// ── Background job ────────────────────────────────────────────────────────────
+// ── Background scan job ───────────────────────────────────────────────────────
 
 let _jobRunning = false;
 let _jobTotal = 0;
@@ -206,8 +153,8 @@ export function getJobProgress(): { running: boolean; processed: number; total: 
 }
 
 /**
- * Scans all unprocessed images (no photo_faces entry) and runs face detection.
- * Safe to call repeatedly — skips already-processed photos and is non-reentrant.
+ * Scan all unprocessed images and run face detection.
+ * Non-reentrant — safe to call repeatedly.
  */
 export async function runFaceRecognitionJob(): Promise<void> {
   if (_jobRunning) return;
@@ -229,34 +176,22 @@ export async function runFaceRecognitionJob(): Promise<void> {
           LIMIT 5000`,
     );
     const photos = (rows as any).rows ?? [];
-    if (photos.length === 0) { console.log("[face-recognition] job: no unprocessed photos"); return; }
+    if (photos.length === 0) {
+      console.log("[face-recognition] job: no unprocessed photos");
+      return;
+    }
 
     _jobTotal = photos.length;
     console.log(`[face-recognition] job: processing ${photos.length} unprocessed photo(s)`);
 
-    const userIds: string[] = [...new Set(photos.map((p: any) => p.user_id as string))];
-    for (const uid of userIds) {
-      await ensureList(listIdForUser(uid));
-      try { await triggerTraining(listIdForUser(uid)); } catch { /* ok on empty list */ }
-    }
-
-    let trainCounter = 0;
     for (const photo of photos) {
       try {
         const buf = await downloadBlob(photo.blob_name);
-        await processFacesForPhotoAzure(photo.id, photo.user_id, buf, photo.content_type);
-        trainCounter++;
-        if (trainCounter % 20 === 0) {
-          try { await triggerTraining(listIdForUser(photo.user_id)); } catch { /* ok */ }
-        }
+        await processFacesForPhoto(photo.id, photo.user_id, photo.blob_name, buf, photo.content_type);
       } catch (err) {
         console.error(`[face-recognition] job: error on ${photo.id}:`, err);
       }
       _jobProcessed++;
-    }
-
-    for (const uid of userIds) {
-      try { await triggerTraining(listIdForUser(uid)); } catch { /* ok */ }
     }
     console.log("[face-recognition] job: done");
   } catch (err) {
@@ -265,4 +200,3 @@ export async function runFaceRecognitionJob(): Promise<void> {
     _jobRunning = false;
   }
 }
-import { eq, and, isNotNull, sql } from "drizzle-orm";
