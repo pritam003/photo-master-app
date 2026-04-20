@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
+import BlurThumb from "./BlurThumb";
 import { Heart, FolderPlus, Check, FolderMinus, Trash2, Download, X, EyeOff, Eye, Share2 } from "lucide-react";
 import { groupPhotosByDate } from "@/lib/api";
 import Lightbox from "./Lightbox";
@@ -10,6 +11,7 @@ interface PhotoGridProps {
   photos: any[];
   emptyMessage?: string;
   dateField?: "taken" | "uploaded";
+  justified?: boolean;
   onRemoveFromAlbum?: (photoId: string) => void;
   onTrash?: (photoId: string) => void;
   onBulkTrash?: (ids: string[]) => Promise<void>;
@@ -18,7 +20,7 @@ interface PhotoGridProps {
   onPhotoTrash?: (id: string) => void;
 }
 
-export default function PhotoGrid({ photos, emptyMessage = "No photos yet", dateField = "taken", onRemoveFromAlbum, onTrash, onBulkTrash, onHide, onBulkHide, onPhotoTrash }: PhotoGridProps) {
+export default function PhotoGrid({ photos, emptyMessage = "No photos yet", dateField = "taken", justified = false, onRemoveFromAlbum, onTrash, onBulkTrash, onHide, onBulkHide, onPhotoTrash }: PhotoGridProps) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkAlbumPicker, setShowBulkAlbumPicker] = useState(false);
@@ -263,6 +265,7 @@ export default function PhotoGrid({ photos, emptyMessage = "No photos yet", date
           month={month}
           monthPhotos={monthPhotos}
           photoIndexMap={photoIndexMap}
+          justified={justified}
           onOpenLightbox={handleOpenLightbox}
           onRemoveFromAlbum={onRemoveFromAlbum}
           onTrash={onTrash}
@@ -455,10 +458,11 @@ function StackCell({ hiddenCount, previews, onExpand }: { hiddenCount: number; p
   );
 }
 
-const MonthGroup = memo(function MonthGroup({ month, monthPhotos, photoIndexMap, onOpenLightbox, onRemoveFromAlbum, onTrash, onHide, selectedIds, selecting, onToggleSelect }: {
+const MonthGroup = memo(function MonthGroup({ month, monthPhotos, photoIndexMap, justified, onOpenLightbox, onRemoveFromAlbum, onTrash, onHide, selectedIds, selecting, onToggleSelect }: {
   month: string;
   monthPhotos: any[];
   photoIndexMap: Map<string, number>;
+  justified: boolean;
   onOpenLightbox: (idx: number) => void;
   onRemoveFromAlbum?: (photoId: string) => void;
   onTrash?: (photoId: string) => void;
@@ -472,7 +476,7 @@ const MonthGroup = memo(function MonthGroup({ month, monthPhotos, photoIndexMap,
   const visiblePhotos = monthPhotos.slice(0, visibleCount);
 
   return (
-    <div className="mb-10" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 600px" }}>
+    <div className="mb-10" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 300px" }}>
       <div className="flex items-center justify-between mb-4 px-1">
         <div className="flex items-center gap-2.5">
           <span className="w-1 h-5 rounded-full bg-primary inline-block" />
@@ -480,25 +484,55 @@ const MonthGroup = memo(function MonthGroup({ month, monthPhotos, photoIndexMap,
           <span className="text-xs text-muted-foreground font-normal">({monthPhotos.length})</span>
         </div>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-        {visiblePhotos.map((photo: any) => {
-          const globalIdx = photoIndexMap.get(photo.id) ?? -1;
-          return (
-            <PhotoThumbnail
-              key={photo.id}
-              photo={photo}
-              globalIndex={globalIdx}
-              onOpenLightbox={onOpenLightbox}
-              onRemoveFromAlbum={onRemoveFromAlbum}
-              onTrash={onTrash}
-              onHide={onHide}
-              selected={selectedIds.has(photo.id)}
-              selecting={selecting}
-              onToggleSelect={onToggleSelect}
-            />
-          );
-        })}
-      </div>
+      {justified ? (
+        <div className="flex flex-wrap gap-0.5">
+          {visiblePhotos.map((photo: any) => {
+            const globalIdx = photoIndexMap.get(photo.id) ?? -1;
+            const aspect = photo.width && photo.height ? photo.width / photo.height : 1;
+            return (
+              <div
+                key={photo.id}
+                style={{ height: 160, flexGrow: 1, width: Math.round(160 * aspect), minWidth: 60, maxWidth: 380, overflow: "hidden", borderRadius: 2, aspectRatio: aspect }}
+              >
+                <PhotoThumbnail
+                  photo={photo}
+                  globalIndex={globalIdx}
+                  onOpenLightbox={onOpenLightbox}
+                  onRemoveFromAlbum={onRemoveFromAlbum}
+                  onTrash={onTrash}
+                  onHide={onHide}
+                  selected={selectedIds.has(photo.id)}
+                  selecting={selecting}
+                  onToggleSelect={onToggleSelect}
+                  justified
+                />
+              </div>
+            );
+          })}
+          {/* Spacer to fill the last partial row without stretching */}
+          <div style={{ height: 160, flexGrow: 9999, minWidth: 0 }} />
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-0.5">
+          {visiblePhotos.map((photo: any) => {
+            const globalIdx = photoIndexMap.get(photo.id) ?? -1;
+            return (
+              <PhotoThumbnail
+                key={photo.id}
+                photo={photo}
+                globalIndex={globalIdx}
+                onOpenLightbox={onOpenLightbox}
+                onRemoveFromAlbum={onRemoveFromAlbum}
+                onTrash={onTrash}
+                onHide={onHide}
+                selected={selectedIds.has(photo.id)}
+                selecting={selecting}
+                onToggleSelect={onToggleSelect}
+              />
+            );
+          })}
+        </div>
+      )}
       {hasMore && (
         <div className="flex justify-center mt-4">
           <button
@@ -513,7 +547,7 @@ const MonthGroup = memo(function MonthGroup({ month, monthPhotos, photoIndexMap,
   );
 });
 
-function VideoThumbnailCell({ videoSrc, isHovered }: { thumbSrc: string; videoSrc: string; alt: string; isHovered: boolean }) {
+function VideoThumbnailCell({ thumbSrc, videoSrc, isHovered }: { thumbSrc: string; videoSrc: string; alt: string; isHovered: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [inView, setInView] = useState(false);
@@ -575,6 +609,7 @@ function VideoThumbnailCell({ videoSrc, isHovered }: { thumbSrc: string; videoSr
         <video
           ref={videoRef}
           src={videoSrc}
+          poster={thumbSrc}
           className="w-full h-full object-cover"
           muted
           loop
@@ -596,9 +631,10 @@ function VideoThumbnailCell({ videoSrc, isHovered }: { thumbSrc: string; videoSr
   );
 }
 
-const PhotoThumbnail = memo(function PhotoThumbnail({ photo, globalIndex, onOpenLightbox, onRemoveFromAlbum, onTrash, onHide, selected, selecting, onToggleSelect }: {
+const PhotoThumbnail = memo(function PhotoThumbnail({ photo, globalIndex, justified = false, onOpenLightbox, onRemoveFromAlbum, onTrash, onHide, selected, selecting, onToggleSelect }: {
   photo: any;
   globalIndex: number;
+  justified?: boolean;
   onOpenLightbox: (idx: number) => void;
   onRemoveFromAlbum?: (photoId: string) => void;
   onTrash?: (photoId: string) => void;
@@ -607,11 +643,9 @@ const PhotoThumbnail = memo(function PhotoThumbnail({ photo, globalIndex, onOpen
   selecting: boolean;
   onToggleSelect: (id: string) => void;
 }) {
-  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
   const [videoHovered, setVideoHovered] = useState(false);
   const isVideo = photo.contentType?.startsWith("video/") || /\.(mp4|mov|webm|avi|mkv)$/i.test(photo.filename || "");
-  const thumbUrl = photo.thumbnailUrl || photo.url;
   const [showAlbumPicker, setShowAlbumPicker] = useState(false);
   const [added, setAdded] = useState<string | null>(null);
   const queryClient = useQueryClient();
@@ -657,7 +691,7 @@ const PhotoThumbnail = memo(function PhotoThumbnail({ photo, globalIndex, onOpen
       }}
       data-testid={`photo-${photo.id}`}
       data-photo-id={photo.id}
-      className="photo-thumb relative aspect-square bg-muted overflow-hidden rounded-lg group focus:outline-none focus:ring-2 focus:ring-primary transition-[transform,box-shadow] duration-200 hover:scale-[1.03] hover:shadow-lg hover:z-10"
+      className={`photo-thumb relative ${justified ? "w-full h-full" : "aspect-square"} bg-muted overflow-hidden rounded-sm group focus:outline-none focus:ring-2 focus:ring-primary transition-[transform,box-shadow] duration-150 hover:scale-[1.04] hover:shadow-xl hover:z-10`}
       style={{ contain: "layout style paint" }}
       onMouseEnter={() => isVideo && setVideoHovered(true)}
       onMouseLeave={() => isVideo && setVideoHovered(false)}
@@ -674,23 +708,21 @@ const PhotoThumbnail = memo(function PhotoThumbnail({ photo, globalIndex, onOpen
             isHovered={videoHovered}
           />
         ) : (
-        <img
-          src={photo.thumbnailUrl || photo.url}
-          alt={photo.filename}
-          loading="lazy"
-          decoding="async"
-          className={`w-full h-full object-cover ${loaded ? "opacity-100" : "opacity-0"}`}
-          onLoad={() => setLoaded(true)}
-          onError={() => setError(true)}
-        />
+        <BlurThumb
+            src={photo.thumbnailUrl || photo.url}
+            webpSrc={photo.thumbnailWebpUrl ?? null}
+            lqipSrc={photo.lqipDataUrl}
+            dominantColor={photo.dominantColor ?? null}
+            alt={photo.filename}
+            className="absolute inset-0 w-full h-full object-cover"
+            loading={globalIndex < 10 ? "eager" : "lazy"}
+            fetchPriority={globalIndex < 10 ? "high" : "auto"}
+          />
         )
       ) : (
         <div className="w-full h-full flex items-center justify-center bg-muted">
           <span className="text-muted-foreground text-xs text-center px-1 break-all">{photo.filename}</span>
         </div>
-      )}
-      {!loaded && !error && !isVideo && (
-        <div className="absolute inset-0 bg-muted animate-pulse" />
       )}
 
       {/* Selection checkbox — top left */}
