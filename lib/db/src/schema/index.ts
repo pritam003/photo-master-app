@@ -26,8 +26,6 @@ export const photosTable = pgTable("photos", {
   takenAt: timestamp("taken_at"),
   tags: text("tags"),
   locationName: text("location_name"),
-  /** Google Media Item ID — set when photo was imported from Google Photos auto-sync. */
-  googleMediaItemId: text("google_media_item_id"),
 }, (t) => [
   index("photos_user_uploaded_idx").on(t.userId, t.uploadedAt),
   index("photos_user_trashed_idx").on(t.userId, t.trashed),
