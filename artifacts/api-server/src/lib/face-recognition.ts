@@ -1,17 +1,22 @@
 /**
- * Face detection using Azure Face API (detection_01, basic — no identification approval needed).
+ * Face detection via Azure Face API (detection_01, no approval required) +
+ * local face grouping via 24×24 grayscale cosine-similarity descriptors (sharp).
  *
- * NOTE: Azure Face API Identification/Verification (recognition models, LargeFaceList,
- * FindSimilars, person grouping across photos) requires Limited Access approval:
- * https://aka.ms/facerecognition
- *
- * Until approval is granted, each detected face creates its own person entry.
- * Apply for access and re-run the scan to get proper cross-photo grouping.
+ * Strategy:
+ * • Azure Face API detects face bounding boxes (detection_01 — no Limited Access
+ *   approval; returnFaceId=false so no recognition model is used).
+ * • For each detected face: crop with sharp → resize to 24×24 grayscale →
+ *   mean-centred pixel vector → cosine similarity against all existing person
+ *   descriptors for this user.
+ * • Similarity ≥ SIMILARITY_THRESHOLD → assign to existing person.
+ * • No match → create new person + store descriptor.
+ * • Descriptors are serialised as comma-separated floats in the
+ *   azure_persisted_face_id column (repurposed as a lightweight vector store).
  */
 
 import { randomUUID } from "crypto";
 import { db, peopleTable, photoFacesTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { eq, and, isNotNull, sql } from "drizzle-orm";
 import { uploadBlob, downloadBlob } from "./azure-storage.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -65,6 +70,66 @@ async function detectFaces(buffer: Buffer): Promise<any[] | null> {
   return null;
 }
 
+// ── Local face descriptor (no ML model required) ─────────────────────────────
+
+/** Dimensions of the descriptor vector: 24 × 24 grayscale pixels = 576 floats. */
+const DESCRIPTOR_DIM = 576;
+
+/** Cosine similarity threshold for same-person matching (0–1, higher = stricter). */
+const SIMILARITY_THRESHOLD = parseFloat(process.env.FACE_SIMILARITY_THRESHOLD ?? "0.82");
+
+interface FaceRect { top: number; left: number; width: number; height: number }
+
+/**
+ * Crop the face region, resize to 24×24 grayscale, mean-centre the pixel values.
+ * Returns a Float32Array descriptor, or null on error.
+ */
+async function computeDescriptor(buffer: Buffer, rect: FaceRect): Promise<Float32Array | null> {
+  try {
+    const { default: sharp } = await import("sharp");
+    const pad = Math.round(Math.max(rect.width, rect.height) * 0.3);
+    const meta = await sharp(buffer).metadata();
+    const W = meta.width ?? 99999;
+    const H = meta.height ?? 99999;
+    const cropLeft = Math.max(0, rect.left - pad);
+    const cropTop  = Math.max(0, rect.top  - pad);
+    const cropW    = Math.min(W - cropLeft, rect.width  + pad * 2);
+    const cropH    = Math.min(H - cropTop,  rect.height + pad * 2);
+    if (cropW < 4 || cropH < 4) return null;
+
+    const raw = await sharp(buffer)
+      .extract({ left: cropLeft, top: cropTop, width: cropW, height: cropH })
+      .resize(24, 24)
+      .grayscale()
+      .raw()
+      .toBuffer();
+
+    const desc = new Float32Array(DESCRIPTOR_DIM);
+    let mean = 0;
+    for (let i = 0; i < DESCRIPTOR_DIM; i++) { desc[i] = raw[i] / 255; mean += desc[i]; }
+    mean /= DESCRIPTOR_DIM;
+    for (let i = 0; i < DESCRIPTOR_DIM; i++) desc[i] -= mean;
+    return desc;
+  } catch {
+    return null;
+  }
+}
+
+function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+function serializeDescriptor(d: Float32Array): string {
+  return Array.from(d).join(",");
+}
+
+function deserializeDescriptor(s: string): Float32Array {
+  return new Float32Array(s.split(",").map(Number));
+}
+
 // ── Per-photo processing ──────────────────────────────────────────────────────
 
 async function processFacesForPhotoAzure(
@@ -93,35 +158,71 @@ async function processFacesForPhotoAzure(
     return;
   }
 
+  // Load one descriptor per existing person for this user (for similarity matching)
+  const existingRows = await db
+    .select({ personId: photoFacesTable.personId, descriptorStr: photoFacesTable.azurePersistedFaceId })
+    .from(photoFacesTable)
+    .where(and(eq(photoFacesTable.userId, userId), isNotNull(photoFacesTable.personId), isNotNull(photoFacesTable.azurePersistedFaceId)));
+
+  // One representative descriptor per person (first one found)
+  const personDescriptors = new Map<string, Float32Array>();
+  for (const row of existingRows) {
+    if (!row.personId || !row.descriptorStr) continue;
+    if (!personDescriptors.has(row.personId)) {
+      try { personDescriptors.set(row.personId, deserializeDescriptor(row.descriptorStr)); } catch { /* malformed */ }
+    }
+  }
+
   for (const face of faces) {
     const { top, left, width, height } = face.faceRectangle;
+    const rect: FaceRect = { top, left, width, height };
+    const descriptor = await computeDescriptor(buffer, rect);
 
-    // Each face gets its own person entry (no cross-photo grouping without
-    // Face API Identification approval — see https://aka.ms/facerecognition)
-    const [newPerson] = await db.insert(peopleTable).values({ userId }).returning();
-    const personId = newPerson.id;
+    // Try to match against an existing person
+    let personId: string | null = null;
+    if (descriptor) {
+      let bestSim = -1;
+      let bestPersonId: string | null = null;
+      for (const [pid, existing] of personDescriptors) {
+        const sim = cosineSimilarity(descriptor, existing);
+        if (sim > bestSim) { bestSim = sim; bestPersonId = pid; }
+      }
+      if (bestSim >= SIMILARITY_THRESHOLD && bestPersonId) {
+        personId = bestPersonId;
+        console.log(`[face-recognition] matched person ${personId} (sim=${bestSim.toFixed(3)})`);
+      }
+    }
 
-    // Crop & upload face thumbnail as person cover image
-    try {
-      const { default: sharp } = await import("sharp");
-      const pad = Math.round(Math.max(width, height) * 0.4);
-      const meta = await sharp(buffer).metadata();
-      const crop = {
-        left: Math.max(0, left - pad),
-        top: Math.max(0, top - pad),
-        width: Math.min((meta.width ?? 9999) - Math.max(0, left - pad), width + pad * 2),
-        height: Math.min((meta.height ?? 9999) - Math.max(0, top - pad), height + pad * 2),
-      };
-      const thumbBuf = await sharp(buffer).extract(crop)
-        .resize(256, 256, { fit: "cover" }).jpeg({ quality: 85 }).toBuffer();
-      const blobName = `${userId}/faces/${randomUUID()}.jpg`;
-      await uploadBlob(blobName, thumbBuf, "image/jpeg");
-      await db.update(peopleTable).set({ coverFaceBlob: blobName }).where(eq(peopleTable.id, personId));
-    } catch { /* non-fatal — person still created */ }
+    if (!personId) {
+      // No match — create new person
+      const [newPerson] = await db.insert(peopleTable).values({ userId }).returning();
+      personId = newPerson.id;
+
+      // Crop & upload face thumbnail as person cover image
+      try {
+        const { default: sharp } = await import("sharp");
+        const pad = Math.round(Math.max(width, height) * 0.4);
+        const meta = await sharp(buffer).metadata();
+        const crop = {
+          left: Math.max(0, left - pad),
+          top: Math.max(0, top - pad),
+          width: Math.min((meta.width ?? 9999) - Math.max(0, left - pad), width + pad * 2),
+          height: Math.min((meta.height ?? 9999) - Math.max(0, top - pad), height + pad * 2),
+        };
+        const thumbBuf = await sharp(buffer).extract(crop)
+          .resize(256, 256, { fit: "cover" }).jpeg({ quality: 85 }).toBuffer();
+        const blobName = `${userId}/faces/${randomUUID()}.jpg`;
+        await uploadBlob(blobName, thumbBuf, "image/jpeg");
+        await db.update(peopleTable).set({ coverFaceBlob: blobName }).where(eq(peopleTable.id, personId));
+      } catch { /* non-fatal — person still created */ }
+
+      if (descriptor) personDescriptors.set(personId, descriptor);
+    }
 
     const boundingBox = JSON.stringify({ top, left, width, height });
+    const descriptorStr = descriptor ? serializeDescriptor(descriptor) : null;
     await db.insert(photoFacesTable).values({
-      photoId, userId, personId, azurePersistedFaceId: null, boundingBox,
+      photoId, userId, personId, azurePersistedFaceId: descriptorStr, boundingBox,
     }).onConflictDoNothing();
   }
 }
