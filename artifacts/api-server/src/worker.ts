@@ -5,29 +5,22 @@
  * Responsibilities (all decoupled from upload latency):
  *   1. AI vision tags      — Azure Computer Vision for every untagged photo
  *   2. GPS + location name — EXIF extraction + Nominatim reverse-geocode
- *   3. Face recognition    — TensorFlow local inference, hourly batch
  *
- * Polling interval: 30 s (for tags + GPS), 1 hour (face recognition)
- *
- * Face recognition is spawned as an isolated child process so a native crash
- * in @tensorflow/tfjs-node or @vladmandic/face-api cannot kill the main worker.
+ * Polling interval: 30 s
  */
 
 import "dotenv/config";
-import { spawn } from "child_process";
 import { db, photosTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
 import { downloadBlob } from "./lib/azure-storage.js";
 import { analyzePhoto } from "./lib/azure-vision.js";
 import { generateVideoThumbnails, generateThumbnails } from "./lib/thumbnails.js";
-import { runFaceRecognitionJob } from "./lib/face-recognition.js";
 import { logger } from "./lib/logger.js";
 import exifr from "exifr";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const POLL_INTERVAL_MS   = 30_000;     // tags + GPS + sync check: every 30 s
-const FACE_INTERVAL_MS   = 60 * 60 * 1000; // face recognition: every hour
 const GPS_RATE_LIMIT_MS  = 1100;       // Nominatim: max 1 req/sec
 const VISION_BATCH       = parseInt(process.env.VISION_BATCH ?? "5", 10);
 const GPS_BATCH          = parseInt(process.env.GPS_BATCH   ?? "20", 10);
@@ -227,93 +220,23 @@ process.on("SIGTERM", () => {
 });
 process.on("SIGINT", () => { _shutdown = true; });
 
-// ── Face-only mode ────────────────────────────────────────────────────────────
-// Face recognition is spawned as a child process (FACE_ONLY_MODE=true) so that
-// a native crash in @tensorflow/tfjs-node or @vladmandic/face-api cannot take
-// down the main worker process.  The child exits (0 = success, 1 = error)
-// after completing a single pass, and the parent simply awaits its exit code.
+logger.info("[worker] Photo processing worker started");
 
-if (process.env.FACE_ONLY_MODE === "true") {
-  // Catch any uncaught exception/rejection from TF or face-api (they sometimes
-  // call process.exit or throw outside async boundaries) to get a log before exit.
-  process.on("uncaughtException", (err) => {
-    logger.error({ err: String(err) }, "[face-worker] uncaughtException — exiting");
-    process.exit(1);
-  });
-  process.on("unhandledRejection", (reason) => {
-    logger.error({ reason: String(reason) }, "[face-worker] unhandledRejection — exiting");
-    process.exit(1);
-  });
-
-  logger.info("[face-worker] starting face recognition pass");
-  runFaceRecognitionJob()
-    .then(() => {
-      logger.info("[face-worker] pass complete — exiting");
-      process.exit(0);
-    })
-    .catch((err) => {
-      logger.error({ err: String(err) }, "[face-worker] unhandled error — exiting");
-      process.exit(1);
-    });
-} else {
-  // ── Normal worker: vision + GPS poll loop + hourly face recognition ──────────
-
-  /**
-   * Spawns a fresh Node.js child process running worker.mjs in FACE_ONLY_MODE.
-   * If the child crashes (e.g. TF segfault), the main worker is unaffected.
-   */
-  function spawnFaceRecognitionJob(): Promise<void> {
-    return new Promise((resolve) => {
-      const workerScript = new URL(import.meta.url).pathname;
-      const child = spawn(
-        process.execPath,
-        ["--enable-source-maps", "--max-old-space-size=3072", workerScript],
-        {
-          env: { ...process.env, FACE_ONLY_MODE: "true" },
-          stdio: "inherit",
-        },
-      );
-      child.on("close", (code) => {
-        if (code !== 0) {
-          logger.warn({ code }, "[worker] face: child process exited with error — will retry next interval");
-        } else {
-          logger.info("[worker] face: child process completed successfully");
-        }
-        resolve();
-      });
-      child.on("error", (err) => {
-        logger.warn({ err }, "[worker] face: failed to spawn child process");
-        resolve();
-      });
-    });
-  }
-
-  logger.info("[worker] Photo processing worker started");
-
-  // Face recognition: first run 30 s after startup, then hourly
-  setTimeout(() => {
-    spawnFaceRecognitionJob();
-    setInterval(() => {
-      spawnFaceRecognitionJob();
-    }, FACE_INTERVAL_MS);
-  }, 30_000);
-
-  // Vision + GPS + video thumbnails: run immediately, then every 30 s
-  async function pollLoop() {
-    while (!_shutdown) {
-      try {
-        await runVisionPass();
-        await runGpsPass();
-        await runImageThumbnailPass();
-        await runVideoThumbnailPass();
-      } catch (err) {
-        logger.warn({ err }, "[worker] poll error");
-      }
-      await sleep(POLL_INTERVAL_MS);
+// Vision + GPS + video thumbnails: run immediately, then every 30 s
+async function pollLoop() {
+  while (!_shutdown) {
+    try {
+      await runVisionPass();
+      await runGpsPass();
+      await runImageThumbnailPass();
+      await runVideoThumbnailPass();
+    } catch (err) {
+      logger.warn({ err }, "[worker] poll error");
     }
-    logger.info("[worker] shutdown complete");
-    process.exit(0);
+    await sleep(POLL_INTERVAL_MS);
   }
-
-  pollLoop();
+  logger.info("[worker] shutdown complete");
+  process.exit(0);
 }
+
+pollLoop();

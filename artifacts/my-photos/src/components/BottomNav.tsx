@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Images, Heart, BookImage, Users, Plus, Menu } from "lucide-react";
+import { Images, Heart, BookImage, Plus, Menu } from "lucide-react";
 import { useState } from "react";
 import Sidebar from "./Sidebar";
 
@@ -17,7 +17,6 @@ export default function BottomNav({ onUploadClick, darkMode, onToggleDark }: Bot
     { href: "/", icon: Images, label: "Photos" },
     { href: "/favorites", icon: Heart, label: "Favorites" },
     { href: "/albums", icon: BookImage, label: "Albums" },
-    { href: "/people", icon: Users, label: "People" },
   ];
 
   const isActive = (href: string) => href === "/" ? location === "/" : location.startsWith(href);

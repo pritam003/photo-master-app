@@ -14,8 +14,7 @@ import AlbumsPage from "@/pages/albums";
 import AlbumDetailPage from "@/pages/album-detail";
 import TrashPage from "@/pages/trash";
 import ArchivePage from "@/pages/archive";
-import PeoplePage from "@/pages/people";
-import PersonDetailPage from "@/pages/person-detail";
+
 import LoginPage from "@/pages/login";
 import SharePage from "@/pages/share";
 import SharedAlbumPage from "@/pages/shared-album";
@@ -119,8 +118,6 @@ function AppLayout() {
           <Route path="/albums/:id" component={AlbumDetailPage} />
           <Route path="/trash" component={TrashPage} />
           <Route path="/archive" component={ArchivePage} />
-          <Route path="/people" component={PeoplePage} />
-          <Route path="/people/:id" component={PersonDetailPage} />
           <Route component={NotFound} />
         </Switch>
       </main>
