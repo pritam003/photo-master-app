@@ -2,6 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { randomUUID } from "crypto";
 import path from "path";
+import sharp from "sharp";
 import { db, photosTable, albumPhotosTable, albumsTable, shareLinksTable } from "@workspace/db";
 import { eq, and, desc, ilike, or, sql, inArray } from "drizzle-orm";
 import { uploadBlob, deleteBlob, generateSasUrl, generateUploadSasUrl, downloadBlob } from "../lib/azure-storage.js";
@@ -114,7 +115,8 @@ router.get("/photos/on-this-day", async (req: any, res) => {
     for (const photo of (todayRows as any).rows ?? []) {
       if (todayPhotos.length >= 10) break;
       const url = generateSasUrl(photo.blob_name);
-      const thumbnailUrl = photo.thumb_blob_name ? generateSasUrl(photo.thumb_blob_name) : url;
+      const thumbnailUrl = generateSasUrl(photo.thumb_blob_name || photo.blob_name);
+      const thumbnailWebpUrl = photo.thumb_webp_blob_name ? generateSasUrl(photo.thumb_webp_blob_name) : null;
       todayPhotos.push({
         id: photo.id,
         filename: photo.filename,
@@ -122,6 +124,12 @@ router.get("/photos/on-this-day", async (req: any, res) => {
         size: photo.size,
         url,
         thumbnailUrl,
+        thumbnailWebpUrl,
+        lqipDataUrl: photo.lqip_data ?? null,
+        dominantColor: photo.dominant_color ?? null,
+        favorite: photo.favorite,
+        uploadedAt: photo.uploaded_at,
+        takenAt: photo.taken_at,
       });
     }
 
@@ -143,7 +151,8 @@ router.get("/photos/on-this-day", async (req: any, res) => {
       if (!byDow[d]) byDow[d] = [];
       if (byDow[d].length < 10) {
         const url = generateSasUrl(photo.blob_name);
-        const thumbnailUrl = photo.thumb_blob_name ? generateSasUrl(photo.thumb_blob_name) : url;
+        const thumbnailUrl = generateSasUrl(photo.thumb_blob_name || photo.blob_name);
+        const thumbnailWebpUrl = photo.thumb_webp_blob_name ? generateSasUrl(photo.thumb_webp_blob_name) : null;
         byDow[d].push({
           id: photo.id,
           filename: photo.filename,
@@ -151,6 +160,9 @@ router.get("/photos/on-this-day", async (req: any, res) => {
           size: photo.size,
           url,
           thumbnailUrl,
+          thumbnailWebpUrl,
+          lqipDataUrl: photo.lqip_data ?? null,
+          dominantColor: photo.dominant_color ?? null,
           favorite: photo.favorite,
           uploadedAt: photo.uploaded_at,
           takenAt: photo.taken_at,
@@ -227,11 +239,12 @@ router.get("/photos/months", async (req: any, res) => {
     );
     // Get up to 6 cover photos per month (1 hero + 5 strip thumbnails)
     const coverRows = await db.execute(
-      sql`SELECT year_month, blob_name
+      sql`SELECT year_month, COALESCE(thumb_blob_name, blob_name) AS cover_blob_name
           FROM (
             SELECT
               TO_CHAR(DATE_TRUNC('month', COALESCE(taken_at, uploaded_at)), 'YYYY-MM') AS year_month,
               blob_name,
+              thumb_blob_name,
               ROW_NUMBER() OVER (
                 PARTITION BY DATE_TRUNC('month', COALESCE(taken_at, uploaded_at))
                 ORDER BY COALESCE(taken_at, uploaded_at) DESC
@@ -247,7 +260,7 @@ router.get("/photos/months", async (req: any, res) => {
     for (const row of (coverRows as any).rows ?? []) {
       if (!coversByMonth[row.year_month]) coversByMonth[row.year_month] = [];
       if (coversByMonth[row.year_month].length < 6) {
-        coversByMonth[row.year_month].push(generateSasUrl(row.blob_name));
+        coversByMonth[row.year_month].push(generateSasUrl(row.cover_blob_name));
       }
     }
     const months = ((countRows as any).rows ?? []).map((r: any) => ({
@@ -261,9 +274,46 @@ router.get("/photos/months", async (req: any, res) => {
   }
 });
 
+router.get("/photos/by-location", async (req: any, res) => {
+  const userId = req.currentUser.id;
+  try {
+    const rows = await db.execute(sql`
+      SELECT
+        location_name,
+        COUNT(*)::int            AS count,
+        MAX(COALESCE(taken_at, uploaded_at)) AS latest,
+        (
+          SELECT blob_name FROM photos p2
+          WHERE p2.user_id = ${userId}
+            AND p2.location_name = p.location_name
+            AND p2.trashed = false AND p2.hidden = false
+            AND p2.thumb_blob_name IS NOT NULL AND p2.thumb_blob_name <> ''
+          ORDER BY COALESCE(taken_at, uploaded_at) DESC LIMIT 1
+        ) AS cover_blob
+      FROM photos p
+      WHERE user_id = ${userId}
+        AND trashed = false
+        AND hidden = false
+        AND location_name IS NOT NULL
+        AND location_name <> ''
+      GROUP BY location_name
+      ORDER BY count DESC
+      LIMIT 200
+    `);
+    const locations = ((rows as any).rows ?? []).map((r: any) => ({
+      locationName: r.location_name as string,
+      count: Number(r.count),
+      coverUrl: r.cover_blob ? generateSasUrl(r.cover_blob as string) : null,
+    }));
+    res.json({ locations });
+  } catch {
+    res.json({ locations: [] });
+  }
+});
+
 router.get("/photos", async (req: any, res) => {
   const userId = req.currentUser.id;
-  const { search, album, favorite, trashed, hidden, limit = "50", offset = "0", orderBy = "taken", month } = req.query as Record<string, string>;
+  const { search, album, favorite, trashed, hidden, limit = "50", offset = "0", orderBy = "taken", month, location } = req.query as Record<string, string>;
 
   const conditions = [eq(photosTable.userId, userId)];
 
@@ -312,6 +362,11 @@ router.get("/photos", async (req: any, res) => {
     conditions.push(
       sql`TO_CHAR(DATE_TRUNC('month', COALESCE(${photosTable.takenAt}, ${photosTable.uploadedAt})), 'YYYY-MM') = ${month}`,
     );
+  }
+
+  // Filter by location name (for Places page)
+  if (location) {
+    conditions.push(eq(photosTable.locationName, location));
   }
 
   let photos;
@@ -407,6 +462,7 @@ router.get("/photos", async (req: any, res) => {
   const photosWithUrls = photos.map((photo: any) => {
       const url = generateSasUrl(photo.blobName);
       const thumbnailUrl = photo.thumbBlobName ? generateSasUrl(photo.thumbBlobName) : url;
+      const thumbnailWebpUrl = photo.thumbWebpBlobName ? generateSasUrl(photo.thumbWebpBlobName) : null;
       const previewUrl = photo.previewBlobName ? generateSasUrl(photo.previewBlobName) : url;
       return {
         id: photo.id,
@@ -418,7 +474,10 @@ router.get("/photos", async (req: any, res) => {
         height: photo.height,
         url,
         thumbnailUrl,
+        thumbnailWebpUrl,
         previewUrl,
+        lqipDataUrl: photo.lqipData ?? null,
+        dominantColor: photo.dominantColor ?? null,
         favorite: photo.favorite,
         trashed: photo.trashed,
         trashedAt: photo.trashedAt,
@@ -500,7 +559,15 @@ router.post("/photos/register", async (req: any, res) => {
         : await generateThumbnails(buf, blobName, contentType);
       if (thumbs) {
         await db.update(photosTable)
-          .set({ thumbBlobName: thumbs.thumbBlobName, previewBlobName: thumbs.previewBlobName })
+          .set({
+            thumbBlobName: thumbs.thumbBlobName,
+            thumbWebpBlobName: thumbs.thumbWebpBlobName,
+            previewBlobName: thumbs.previewBlobName,
+            lqipData: thumbs.lqipData,
+            dominantColor: thumbs.dominantColor,
+            width: thumbs.width,
+            height: thumbs.height,
+          })
           .where(eq(photosTable.id, photo.id));
       }
       await cacheDelPattern(`stats:${userId}`);
@@ -538,7 +605,12 @@ router.post("/photos", upload.single("file"), async (req: any, res) => {
       filename: req.file.originalname,
       blobName,
       thumbBlobName: thumbs?.thumbBlobName ?? null,
+      thumbWebpBlobName: thumbs?.thumbWebpBlobName ?? null,
       previewBlobName: thumbs?.previewBlobName ?? null,
+      lqipData: thumbs?.lqipData ?? null,
+      dominantColor: thumbs?.dominantColor ?? null,
+      width: thumbs?.width ?? null,
+      height: thumbs?.height ?? null,
       description: req.body.description || null,
       contentType: req.file.mimetype,
       size: req.file.size,
@@ -561,6 +633,7 @@ router.post("/photos", upload.single("file"), async (req: any, res) => {
 
   const url = generateSasUrl(blobName);
   const thumbnailUrl = thumbs?.thumbBlobName ? generateSasUrl(thumbs.thumbBlobName) : url;
+  const thumbnailWebpUrl = thumbs?.thumbWebpBlobName ? generateSasUrl(thumbs.thumbWebpBlobName) : null;
   const previewUrl = thumbs?.previewBlobName ? generateSasUrl(thumbs.previewBlobName) : url;
 
   await cacheDelPattern(`stats:${userId}`);
@@ -568,10 +641,90 @@ router.post("/photos", upload.single("file"), async (req: any, res) => {
     ...photo,
     url,
     thumbnailUrl,
+    thumbnailWebpUrl,
     previewUrl,
+    lqipDataUrl: thumbs?.lqipData ?? null,
+    dominantColor: thumbs?.dominantColor ?? null,
     albums: albumId ? [albumId] : [],
   });
 
+});
+
+// POST /api/photos/import-url
+// Body: { url: string, filename?: string }
+// Downloads the image server-side (fast Azure-to-Azure), generates thumb+preview+LQIP, stores in DB.
+// Used for bulk imports from Azure Blob Storage without routing data through the client.
+router.post("/photos/import-url", async (req: any, res) => {
+  const userId = req.currentUser.id;
+  const { url: sourceUrl, filename: rawFilename } = req.body as { url?: string; filename?: string };
+
+  if (!sourceUrl) return res.status(400).json({ error: "url is required" });
+
+  // Derive filename and extension from the URL
+  const urlPath = new URL(sourceUrl).pathname;
+  const filename = rawFilename || path.basename(urlPath) || "photo.jpg";
+  const ext = path.extname(filename) || ".jpg";
+
+  // Detect MIME from extension
+  const mimeMap: Record<string, string> = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".png": "image/png", ".webp": "image/webp",
+    ".gif": "image/gif", ".heic": "image/heic",
+  };
+  const contentType = mimeMap[ext.toLowerCase()] ?? "image/jpeg";
+
+  // Download blob server-side
+  let buffer: Buffer;
+  try {
+    const resp = await fetch(sourceUrl);
+    if (!resp.ok) return res.status(400).json({ error: `Source returned ${resp.status}` });
+    buffer = Buffer.from(await resp.arrayBuffer());
+  } catch (err: any) {
+    return res.status(400).json({ error: "Download failed: " + err.message });
+  }
+
+  const blobName = `uploads/${randomUUID()}${ext}`;
+
+  const [takenAt, thumbs] = await Promise.all([
+    extractTakenAt(buffer, contentType),
+    generateThumbnails(buffer, blobName, contentType),
+  ]);
+
+  await uploadBlob(blobName, buffer, contentType);
+
+  const [photo] = await db
+    .insert(photosTable)
+    .values({
+      userId,
+      filename,
+      blobName,
+      thumbBlobName: thumbs?.thumbBlobName ?? null,
+      thumbWebpBlobName: thumbs?.thumbWebpBlobName ?? null,
+      previewBlobName: thumbs?.previewBlobName ?? null,
+      lqipData: thumbs?.lqipData ?? null,
+      dominantColor: thumbs?.dominantColor ?? null,
+      width: thumbs?.width ?? null,
+      height: thumbs?.height ?? null,
+      contentType,
+      size: buffer.byteLength,
+      takenAt,
+      tags: null,
+      locationName: null,
+      description: null,
+    })
+    .returning();
+
+  const importUrl = generateSasUrl(blobName);
+  await cacheDelPattern(`stats:${userId}`);
+  res.status(201).json({
+    ...photo,
+    url: importUrl,
+    thumbnailUrl: thumbs?.thumbBlobName ? generateSasUrl(thumbs.thumbBlobName) : importUrl,
+    thumbnailWebpUrl: thumbs?.thumbWebpBlobName ? generateSasUrl(thumbs.thumbWebpBlobName) : null,
+    previewUrl: thumbs?.previewBlobName ? generateSasUrl(thumbs.previewBlobName) : importUrl,
+    lqipDataUrl: thumbs?.lqipData ?? null,
+    dominantColor: thumbs?.dominantColor ?? null,
+  });
 });
 
 router.get("/photos/:id/url", async (req: any, res) => {
@@ -596,7 +749,10 @@ router.get("/photos/:id", async (req: any, res) => {
   if (!photo) return res.status(404).json({ error: "Not found" });
 
   const url = generateSasUrl(photo.blobName);
-  res.json({ ...photo, url, thumbnailUrl: url, albums: [] });
+  const thumbnailUrl = photo.thumbBlobName ? generateSasUrl(photo.thumbBlobName) : url;
+  const thumbnailWebpUrl = photo.thumbWebpBlobName ? generateSasUrl(photo.thumbWebpBlobName) : null;
+  const previewUrl = photo.previewBlobName ? generateSasUrl(photo.previewBlobName) : url;
+  res.json({ ...photo, url, thumbnailUrl, thumbnailWebpUrl, previewUrl, lqipDataUrl: photo.lqipData ?? null, dominantColor: photo.dominantColor ?? null, albums: [] });
 });
 
 router.patch("/photos/:id/favorite", async (req: any, res) => {
