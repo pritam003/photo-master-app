@@ -32,10 +32,11 @@ function sleep(ms: number): Promise<void> {
 
 // ── Azure Face API helpers ────────────────────────────────────────────────────
 
-async function faceReqBinary(path: string, buffer: Buffer, contentType: string): Promise<Response> {
+async function faceReqBinary(path: string, buffer: Buffer): Promise<Response> {
+  // Azure Face API binary upload requires application/octet-stream (not image/jpeg etc.)
   return fetch(`${FACE_ENDPOINT}/face/v1.0${path}`, {
     method: "POST",
-    headers: { "Ocp-Apim-Subscription-Key": FACE_KEY, "Content-Type": contentType },
+    headers: { "Ocp-Apim-Subscription-Key": FACE_KEY, "Content-Type": "application/octet-stream" },
     body: buffer,
   });
 }
@@ -45,11 +46,11 @@ async function faceReqBinary(path: string, buffer: Buffer, contentType: string):
  * model, no Identification/Verification features → no approval required).
  * Returns null on persistent 429 (caller should skip without inserting sentinel).
  */
-async function detectFaces(buffer: Buffer, contentType: string): Promise<any[] | null> {
+async function detectFaces(buffer: Buffer): Promise<any[] | null> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await faceReqBinary(
       "/detect?detectionModel=detection_01&returnFaceId=false",
-      buffer, contentType,
+      buffer,
     );
     if (res.ok) return res.json();
     if (res.status === 429) {
@@ -77,7 +78,7 @@ async function processFacesForPhotoAzure(
   // Throttle to stay under S0 rate limit
   await sleep(THROTTLE_MS);
 
-  const faces = await detectFaces(buffer, contentType);
+  const faces = await detectFaces(buffer);
 
   if (faces === null) {
     // 429 exhausted — don't insert sentinel, retry next scan run
