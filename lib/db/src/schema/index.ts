@@ -12,8 +12,12 @@ export const photosTable = pgTable("photos", {
   size: bigint("size", { mode: "number" }).notNull(),
   width: integer("width"),
   height: integer("height"),
-  thumbBlobName: text("thumb_blob_name"),   // 600×600 JPEG thumbnail (grid view)
+  thumbBlobName: text("thumb_blob_name"),     // 600×600 JPEG thumbnail (grid view)
+  thumbWebpBlobName: text("thumb_webp_blob_name"), // 600×600 WebP thumbnail (modern browsers)
   previewBlobName: text("preview_blob_name"), // 1920px wide JPEG (lightbox view)
+  lqipData: text("lqip_data"),               // base64 data URL of 64×64 blurred LQIP placeholder
+  dominantColor: text("dominant_color"),     // hex color extracted from 1×1 resize e.g. "#a3b2c1"
+  googleMediaItemId: text("google_media_item_id"), // Google Photos import dedup key
   favorite: boolean("favorite").default(false).notNull(),
   trashed: boolean("trashed").default(false).notNull(),
   trashedAt: timestamp("trashed_at"),
