@@ -116,21 +116,21 @@ export async function warmReadSasKey(): Promise<void> {
 }
 
 export function generateSasUrl(blobName: string, _ttlSeconds = 3600): string {
-  if (process.env.NODE_ENV !== "production") {
-    return `/api/blobs/${blobName}`;
+  // Prefer CDN (Azure Front Door) when available — edge-cached, no SAS tokens needed.
+  // AFD route is configured with originPath=/photos so the container name is not
+  // included in the CDN path (AFD prepends it when forwarding to blob storage).
+  const cdnHostname = process.env.CDN_HOSTNAME;
+  if (cdnHostname) {
+    return `https://${cdnHostname}/${blobName}`;
   }
 
-  // Prefer CDN — stable, cacheable by browsers + CDN edge nodes (no SAS tokens needed
-  // because the blob container has public read access). SAS tokens rotate every hour and
-  // contain timestamps, so they are never cached by browsers or CDN, causing a full
-  // re-download on every page load.
-  const cdnHost = process.env.CDN_HOSTNAME;
-  if (cdnHost) {
-    return `https://${cdnHost}/${containerName}/${blobName}`;
+  // Fall back to direct blob URL when CDN is not configured (local dev with storage account).
+  if (accountName) {
+    return `https://${accountName}.blob.core.windows.net/${containerName}/${blobName}`;
   }
 
-  // Fallback: plain direct blob URL (also public-cacheable, no SAS)
-  return `https://${accountName}.blob.core.windows.net/${containerName}/${blobName}`;
+  // Fallback for local dev without a storage account configured — proxy through API.
+  return `/api/blobs/${blobName}`;
 }
 
 // Generate a write-only SAS URL so the browser can upload directly to Blob Storage
