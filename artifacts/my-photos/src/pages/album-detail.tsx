@@ -1,7 +1,8 @@
 import { useRoute, useLocation } from "wouter";
-import { ArrowLeft, Pencil, Check, Upload, Plus, X, Share2, Archive, MoreHorizontal } from "lucide-react";
+import { ArrowLeft, Pencil, Check, Upload, Plus, X, Share2, Archive, MoreHorizontal, Film } from "lucide-react";
 import GoogleImportModal from "@/components/GoogleImportModal";
 import ShareAlbumModal from "@/components/ShareAlbumModal";
+import CreateMemoryVideoModal from "@/components/CreateMemoryVideoModal";
 import { useState } from "react";
 import { useGetAlbum, useListAlbumPhotos, useUpdateAlbum, useListPhotos, useAddPhotoToAlbum, useRemovePhotoFromAlbum, useTrashPhoto, getListAlbumsQueryKey, getListAlbumPhotosQueryKey, getListPhotosQueryKey, getGetPhotoStatsQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -21,6 +22,7 @@ export default function AlbumDetailPage() {
   const [pickerLimit, setPickerLimit] = useState(50);
   const [showGoogleImport, setShowGoogleImport] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showMemoryVideo, setShowMemoryVideo] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [sortOrder, setSortOrder] = useState<"taken" | "uploaded">("taken");
@@ -190,6 +192,9 @@ export default function AlbumDetailPage() {
                     </svg>
                     Import from Google
                   </button>
+                  <button onClick={() => { setShowMemoryVideo(true); setShowMobileMenu(false); }} disabled={photos.length < 15} className="w-full text-left px-3 py-2 hover:bg-muted transition-colors flex items-center gap-2 disabled:opacity-50" title={photos.length < 15 ? "Need at least 15 photos" : "Create a video slideshow"}>
+                    <Film className="w-3.5 h-3.5" /> Memory video
+                  </button>
                   <button onClick={() => { handleArchiveAlbum(); setShowMobileMenu(false); }} disabled={archiving || !photos.length} className="w-full text-left px-3 py-2 hover:bg-muted transition-colors flex items-center gap-2 text-muted-foreground disabled:opacity-50">
                     <Archive className="w-3.5 h-3.5" /> {archiving ? "Archiving…" : "Archive"}
                   </button>
@@ -246,6 +251,14 @@ export default function AlbumDetailPage() {
         <button onClick={handleArchiveAlbum} disabled={archiving || !photos.length} className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50" title="Move all photos in this album to Archive">
           <Archive className="w-4 h-4" />
           {archiving ? "Archiving…" : "Archive album"}
+        </button>
+        <button
+          onClick={() => setShowMemoryVideo(true)}
+          disabled={photos.length < 15}
+          title={photos.length < 15 ? `Need at least 15 photos (have ${photos.length})` : "Create a memory video slideshow"}
+          className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Film className="w-4 h-4" /> Memory video
         </button>
         <button onClick={() => setShowShare(true)} className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-muted transition-colors">
           <Share2 className="w-4 h-4" /> Share
@@ -357,6 +370,15 @@ export default function AlbumDetailPage() {
           albumId={id}
           albumName={album?.name ?? ""}
           onClose={() => setShowShare(false)}
+        />
+      )}
+
+      {showMemoryVideo && (
+        <CreateMemoryVideoModal
+          albumId={id}
+          albumName={album?.name ?? ""}
+          photos={photos}
+          onClose={() => setShowMemoryVideo(false)}
         />
       )}
     </div>

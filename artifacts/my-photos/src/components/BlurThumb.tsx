@@ -10,6 +10,7 @@ interface BlurThumbProps {
   loading?: "lazy" | "eager";
   fetchPriority?: "high" | "low" | "auto";
   style?: React.CSSProperties;
+  onError?: () => void;
 }
 
 /**
@@ -36,6 +37,7 @@ export default function BlurThumb({
   loading = "lazy",
   fetchPriority = "auto",
   style,
+  onError,
 }: BlurThumbProps) {
   const [lqipVisible, setLqipVisible] = useState(true);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -71,6 +73,7 @@ export default function BlurThumb({
           style={style}
           sizes="(max-width: 640px) 33vw, (max-width: 768px) 25vw, (max-width: 1024px) 20vw, 15vw"
           onLoad={() => setLqipVisible(false)}
+          onError={onError}
         />
       </picture>
 

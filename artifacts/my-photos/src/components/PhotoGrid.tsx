@@ -758,6 +758,7 @@ const PhotoThumbnail = memo(function PhotoThumbnail({ photo, globalIndex, justif
             className="absolute inset-0 w-full h-full object-cover"
             loading={globalIndex < 10 ? "eager" : "lazy"}
             fetchPriority={globalIndex < 10 ? "high" : "auto"}
+            onError={() => setError(true)}
           />
         )
       ) : (

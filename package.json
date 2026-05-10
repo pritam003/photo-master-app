@@ -10,6 +10,7 @@
   },
   "private": true,
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "prettier": "^3.8.1",
     "typescript": "~5.9.2"
   },
@@ -19,9 +20,18 @@
   },
   "pnpm": {
     "supportedArchitectures": {
-      "os": ["current", "linux"],
-      "cpu": ["current", "x64"],
-      "libc": ["current", "musl"]
+      "os": [
+        "current",
+        "linux"
+      ],
+      "cpu": [
+        "current",
+        "x64"
+      ],
+      "libc": [
+        "current",
+        "musl"
+      ]
     }
   }
 }
