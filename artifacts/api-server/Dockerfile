@@ -17,7 +17,7 @@ COPY lib/api-spec/package.json ./lib/api-spec/
 COPY lib/api-zod/package.json ./lib/api-zod/
 COPY lib/api-client-react/package.json ./lib/api-client-react/
 
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN corepack enable && pnpm install --frozen-lockfile --ignore-scripts
 
 # Build native modules in the workspace so they are available in /app/node_modules.
 RUN pnpm rebuild canvas @tensorflow/tfjs-node
